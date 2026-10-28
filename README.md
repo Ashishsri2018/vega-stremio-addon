@@ -45,13 +45,11 @@ restarts.
      environment value takes precedence over the file.
    - `PROXY_ENABLED=true`, `PROXY_SECRET=<random>`, and
      `PUBLIC_BASE_URL=https://<service>.onrender.com` to use the signed media proxy.
-4. After the first deploy, copy **Settings > Deploy Hook** to GitHub under **Settings > Secrets and
-   variables > Actions** as `RENDER_DEPLOY_HOOK_URL`.
-5. Install the addon in Stremio with `https://<service>.onrender.com/manifest.json`.
+4. Install the addon in Stremio with `https://<service>.onrender.com/manifest.json`.
 
-Pushes to `main` run the GitHub Actions workflow (typecheck, tests, build, Docker build) and then
-call the Render deploy hook. The Blueprint sets `autoDeploy: false`, so Render deploys only after CI
-passes; if the secret is missing the deploy step is skipped.
+Pushes to `main` run the GitHub Actions workflow (typecheck, tests, build, Docker build), and Render
+auto-deploys the same commit from GitHub (`autoDeploy: true`). For stricter control, disable
+auto-deploy on the service and deploy manually with `render deploys create <service-id>` after CI.
 
 - Render injects `PORT`; leave it unset.
 - The container entrypoint starts as root only to fix ownership of the mounted disk, then drops to

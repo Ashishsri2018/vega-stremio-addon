@@ -44,20 +44,3 @@ jobs:
           tags: vega-stremio-addon:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to Render
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [verify, docker]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    steps:
-      - name: Trigger Render deploy hook
-        env:
-          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-        run: |
-          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
-            echo "::notice title=Render deploy skipped::Add the RENDER_DEPLOY_HOOK_URL repository secret to enable CD."
-            exit 0
-          fi
-          curl --fail --silent --show-error --request POST --output /dev/null "$RENDER_DEPLOY_HOOK_URL"

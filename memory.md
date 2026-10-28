@@ -24,20 +24,40 @@ ownership plus an integration pass.
 
 ### Verification
 
-- `npm test`: 215 Vitest tests green (unit, fixture update, runtime, pipeline, proxy, routes).
+- `npm test`: 219 Vitest tests green (unit, fixture update, runtime, pipeline, proxy, routes).
 - `npm run typecheck`: clean.
 - `npm run build`: clean.
+- GitHub Actions: typecheck, 219 tests, build, and Docker image build passed on Node 22.
 - Live first start against GitHub: 39/39 providers installed, 1,779,983 bytes, ~30 s, `/health` ok.
 - Live movie `tt0111161`: 83 streams from 6 providers, no magnets.
 - Live series `tt0944947:1:1`: 54 streams from 6 providers; season pack `tt0944947:1`: 45 streams.
 - CLI update with unchanged SHA: 0 bytes, 39 skipped; restart reused disk snapshot without network.
 - Settings seeding produced `*_skipTimings=false` for all provider keys.
+- `PROVIDER_SETTINGS_JSON` overrides the settings file; malformed inline JSON keeps the last good config.
+
+## 2026-10-28 - Render deployment
+
+The public repository is `https://github.com/Ashishsri2018/vega-stremio-addon`. Render service
+`srv-dbgscpff3r2c73aiimkg` runs the free Docker plan in Oregon with auto-deploy on commits to
+`main`; GitHub Actions runs CI on the same commits. The addon URL is
+`https://vega-stremio-addon-qtjz.onrender.com/manifest.json`.
+
+Deployed checks:
+
+- `/manifest.json`: HTTP 200 with the expected manifest.
+- `/health`: `ok`, 39/39 providers active, no pending updates.
+- Movie `tt0111161` warm: 38 streams, 0 magnets, 8 streams with proxy headers, ~6 s.
+- Series `tt0944947:1:1` warm: 32 streams, ~6 s; first uncached request took 42-52 s on free CPU.
+- Invalid IMDb IDs return `{"streams":[]}`; `HEAD` returns immediately.
+
+The free plan stores data in `/tmp/data` and spins down when idle, so provider snapshots and runtime
+KV/cookies are re-created after a restart. Use `PROVIDER_SETTINGS_JSON` for persistent settings, or
+upgrade to Starter with the disk-enabled `render.yaml` blueprint.
 
 ### Known issues / notes
 
 - `curl-cffi-node` 0.1.8 fails to load its native binding in this linux-arm64 PRoot environment;
   the addon correctly falls back to native fetch. Curl-specific impersonation is untested here.
-- Docker is not installed in the development environment, so the Dockerfile has not been built;
-  the npm build and runtime were validated directly.
 - Provider-side WAF/site volatility remains the main live failure source; failures are isolated.
+- Uncached series requests on the free Render plan can approach the 45 s global deadline.
 - Upstream code executes in-process with Node privileges; this is an accepted trust boundary per PLAN.

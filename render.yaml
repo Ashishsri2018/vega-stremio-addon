@@ -10,7 +10,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
-    autoDeploy: false
+    autoDeploy: true
     envVars:
       - key: DATA_DIR
         value: /data

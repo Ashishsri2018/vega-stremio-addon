@@ -1,0 +1,30 @@
+# Render Blueprint for the paid Starter plan with a persistent disk.
+# Optional values (GITHUB_TOKEN, PROVIDER_SETTINGS_JSON) can be added later
+# in the Render dashboard under Environment.
+services:
+  - type: web
+    name: vega-stremio-addon
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: UPDATE_INTERVAL_MIN_HOURS
+        value: "4"
+      - key: UPDATE_INTERVAL_MAX_HOURS
+        value: "6"
+      - key: INCLUDE_MAGNETS
+        value: "false"
+      - key: PROXY_ENABLED
+        value: "false"
+      - key: LOG_LEVEL
+        value: info
+    disk:
+      name: vega-data
+      mountPath: /data
+      sizeGB: 1

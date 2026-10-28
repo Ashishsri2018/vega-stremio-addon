@@ -1,0 +1,27 @@
+# Render free-plan variant. Copy this file over render.yaml (or use it as the
+# Blueprint path) if you do not want to pay for a persistent disk.
+# The filesystem is ephemeral: provider snapshots are re-downloaded after every
+# spin-down/restart, and KV/cookies/settings written at runtime are lost.
+services:
+  - type: web
+    name: vega-stremio-addon
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: DATA_DIR
+        value: /tmp/data
+      - key: UPDATE_INTERVAL_MIN_HOURS
+        value: "4"
+      - key: UPDATE_INTERVAL_MAX_HOURS
+        value: "6"
+      - key: INCLUDE_MAGNETS
+        value: "false"
+      - key: PROXY_ENABLED
+        value: "false"
+      - key: LOG_LEVEL
+        value: info

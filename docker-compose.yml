@@ -1,0 +1,19 @@
+services:
+  vega-addon:
+    build: .
+    ports:
+      - "7000:7000"
+    volumes:
+      - ./data:/data
+    environment:
+      - PROVIDER_SOURCE=Zenda-Cross/vega-providers
+      - UPDATE_INTERVAL_MIN_HOURS=4
+      - UPDATE_INTERVAL_MAX_HOURS=6
+      - INCLUDE_MAGNETS=false
+      - PROXY_ENABLED=false
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    init: true

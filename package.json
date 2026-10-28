@@ -1,0 +1,35 @@
+{
+  "name": "vega-stremio-addon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted Stremio stream addon backed by Zenda-Cross/vega-providers",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "update": "node dist/cli/update.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0",
+    "express": "^4.21.2",
+    "zod": "^3.24.1"
+  },
+  "optionalDependencies": {
+    "curl-cffi-node": "^0.1.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
+  }
+}

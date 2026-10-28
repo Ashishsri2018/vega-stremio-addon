@@ -36,9 +36,12 @@ The repository includes a Render Blueprint (`render.yaml`): a Docker web service
 plan with a 1 GB persistent disk mounted at `/data`, so snapshots and provider-written KV survive
 restarts.
 
+Live instance: `https://vega-stremio-addon-qtjz.onrender.com/manifest.json` (free plan, Oregon).
+
 1. Push the repository to GitHub.
 2. In Render, choose **New +** > **Blueprint** and select the repository. Render reads
-   `render.yaml`.
+   `render.yaml`. Make sure Render's GitHub app can access the repository, otherwise push webhooks
+   (and therefore auto-deploy) are not delivered.
 3. Optionally add environment variables in the Render dashboard:
    - `GITHUB_TOKEN` for higher GitHub API rate limits.
    - `PROVIDER_SETTINGS_JSON` with the same JSON accepted by `provider-settings.json`; the
@@ -48,8 +51,10 @@ restarts.
 4. Install the addon in Stremio with `https://<service>.onrender.com/manifest.json`.
 
 Pushes to `main` run the GitHub Actions workflow (typecheck, tests, build, Docker build), and Render
-auto-deploys the same commit from GitHub (`autoDeploy: true`). For stricter control, disable
-auto-deploy on the service and deploy manually with `render deploys create <service-id>` after CI.
+auto-deploys the same commit from GitHub (`autoDeploy: true`). Grant Render's GitHub app access to
+the repository under GitHub **Settings > Applications > Render > Configure**; without it, Render can
+clone a public repository but does not receive push webhooks. You can also deploy manually with
+`render deploys create <service-id>` or use the service's Deploy Hook.
 
 - Render injects `PORT`; leave it unset.
 - The container entrypoint starts as root only to fix ownership of the mounted disk, then drops to

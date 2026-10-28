@@ -38,9 +38,10 @@ ownership plus an integration pass.
 ## 2026-10-28 - Render deployment
 
 The public repository is `https://github.com/Ashishsri2018/vega-stremio-addon`. Render service
-`srv-dbgscpff3r2c73aiimkg` runs the free Docker plan in Oregon with auto-deploy on commits to
-`main`; GitHub Actions runs CI on the same commits. The addon URL is
-`https://vega-stremio-addon-qtjz.onrender.com/manifest.json`.
+`srv-dbgscpff3r2c73aiimkg` runs the free Docker plan in Oregon; GitHub Actions runs CI on commits to
+`main`. Render auto-deploy is enabled, but push webhooks require one-time Render GitHub app access
+to the repository; until then deploys are manual (`render deploys create <service-id>`). The addon
+URL is `https://vega-stremio-addon-qtjz.onrender.com/manifest.json`.
 
 Deployed checks:
 

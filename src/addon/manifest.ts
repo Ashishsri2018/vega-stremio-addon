@@ -13,6 +13,6 @@ export function getManifest(): StremioManifest {
     resources: ["stream"],
     idPrefixes: ["tt"],
     catalogs: [],
-    behaviorHints: { configurable: false },
+    behaviorHints: { configurable: true },
   };
 }

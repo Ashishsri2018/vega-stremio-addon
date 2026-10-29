@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/addon/routes.js";
 import { ADDON_ID, ADDON_VERSION } from "../src/addon/manifest.js";
 import { parseStreamId } from "../src/addon/parseId.js";
+import { encodeUserConfig } from "../src/addon/userConfig.js";
 import { verifyProxyToken } from "../src/proxy/sign.js";
 import { loadConfig, type AppConfig } from "../src/config.js";
 import type {
@@ -97,10 +98,123 @@ describe("manifest", () => {
       resources: ["stream"],
       idPrefixes: ["tt"],
       catalogs: [],
-      behaviorHints: { configurable: false },
+      behaviorHints: { configurable: true },
     });
     expect(ADDON_ID).toBe("community.vega.stremio");
     expect(ADDON_VERSION).toBe("1.0.0");
+  });
+});
+
+describe("configured addon", () => {
+  const segment = encodeUserConfig({ maxRes: 720, minRes: null, includeUnknown: true });
+
+  it("serves the same manifest under a config segment", async () => {
+    const base = await startApp(createApp(makeDeps()));
+    const response = await nativeFetch(`${base}/${segment}/manifest.json`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+    const body = (await response.json()) as {
+      id: string;
+      behaviorHints?: { configurable?: boolean };
+    };
+    expect(body.id).toBe(ADDON_ID);
+    expect(body.behaviorHints?.configurable).toBe(true);
+  });
+
+  it("serves the configure page at the root and under a config segment", async () => {
+    const base = await startApp(createApp(makeDeps()));
+
+    for (const path of ["/configure", `/${segment}/configure`]) {
+      const response = await nativeFetch(`${base}${path}`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      const html = await response.text();
+      expect(html).toContain("Include streams with unknown resolution");
+      expect(html).toContain("stremio://");
+    }
+  });
+});
+
+describe("stream filtering", () => {
+  const streams: StremioStream[] = [
+    { name: "P", title: "1080p", url: "https://cdn.example.com/1080.mp4" },
+    { name: "P", title: "720p", url: "https://cdn.example.com/720.mp4" },
+    { name: "P", title: "480p", url: "https://cdn.example.com/480.mp4" },
+    { name: "P", title: "HD", url: "https://cdn.example.com/hd.mp4" },
+  ];
+
+  function urlsOf(body: unknown): string[] {
+    return ((body as { streams: StremioStream[] }).streams ?? []).map(
+      (entry) => entry.url,
+    );
+  }
+
+  it("applies the config segment and keeps unknown quality by default", async () => {
+    const pipeline: StreamHandlerApi = { handle: vi.fn(async () => streams) };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+    const segment = encodeUserConfig({ maxRes: 720, minRes: null, includeUnknown: true });
+
+    const response = await nativeFetch(`${base}/${segment}/stream/movie/tt0111161.json`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(urlsOf(await response.json())).toEqual([
+      "https://cdn.example.com/720.mp4",
+      "https://cdn.example.com/480.mp4",
+      "https://cdn.example.com/hd.mp4",
+    ]);
+  });
+
+  it("drops unknown quality when disabled in the config", async () => {
+    const pipeline: StreamHandlerApi = { handle: vi.fn(async () => streams) };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+    const segment = encodeUserConfig({
+      maxRes: 720,
+      minRes: null,
+      includeUnknown: false,
+    });
+
+    const response = await nativeFetch(`${base}/${segment}/stream/movie/tt0111161`);
+    expect(urlsOf(await response.json())).toEqual([
+      "https://cdn.example.com/720.mp4",
+      "https://cdn.example.com/480.mp4",
+    ]);
+  });
+
+  it("enforces a minimum resolution", async () => {
+    const pipeline: StreamHandlerApi = { handle: vi.fn(async () => streams) };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+    const segment = encodeUserConfig({ maxRes: null, minRes: 1080, includeUnknown: false });
+
+    const response = await nativeFetch(
+      `${base}/${segment}/stream/series/tt0944947:1:1.json`,
+    );
+    expect(urlsOf(await response.json())).toEqual(["https://cdn.example.com/1080.mp4"]);
+  });
+
+  it("falls back to defaults for invalid or unknown config segments", async () => {
+    const pipeline: StreamHandlerApi = { handle: vi.fn(async () => streams) };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+    const futureVersion = Buffer.from(
+      JSON.stringify({ v: 2, maxRes: 720 }),
+      "utf8",
+    ).toString("base64url");
+
+    for (const segment of ["bm90LWpzb24", futureVersion]) {
+      const response = await nativeFetch(
+        `${base}/${segment}/stream/movie/tt0111161.json`,
+      );
+      expect(response.status).toBe(200);
+      expect(urlsOf(await response.json())).toEqual(streams.map((entry) => entry.url));
+    }
+  });
+
+  it("leaves the unprefixed route unfiltered", async () => {
+    const pipeline: StreamHandlerApi = { handle: vi.fn(async () => streams) };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+
+    const response = await nativeFetch(`${base}/stream/movie/tt0111161.json`);
+    expect(urlsOf(await response.json())).toEqual(streams.map((entry) => entry.url));
   });
 });
 

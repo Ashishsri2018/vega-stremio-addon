@@ -7,7 +7,9 @@ Self-hosted Stremio addon that serves movie and series streams from the 39 enabl
 - Provider code is downloaded from GitHub at runtime and executed in-process.
 - Upstream is checked every 4-6 hours and new provider bundles are hot-swapped without a restart.
 - Direct links are returned with the HTTP headers players need; an optional signed proxy is included.
-- No admin HTTP API. Only `/manifest.json`, `/stream/...`, `/health`, and (when enabled) `/proxy/...`.
+- Per-user filters (max/min resolution) are encoded in the add-on URL; nothing is stored server-side.
+- No admin HTTP API. Only `/configure`, `/manifest.json`, `/stream/...`, `/health`, and (when enabled)
+  `/proxy/...`.
 
 ## Quick start
 
@@ -16,7 +18,8 @@ mkdir -p data
 docker compose up -d --build
 ```
 
-Install in Stremio with `http://<host>:7000/manifest.json`.
+Install in Stremio with `http://<host>:7000/manifest.json`, or open `http://<host>:7000/configure`
+to build a personalized add-on URL with stream filters.
 
 On the first start the addon downloads the current snapshot (39 providers, about 1.8 MB). The
 server binds after the download completes or after 60 seconds, whichever comes first. If GitHub is
@@ -48,7 +51,8 @@ Live instance: `https://vega-stremio-addon-qtjz.onrender.com/manifest.json` (fre
      environment value takes precedence over the file.
    - `PROXY_ENABLED=true`, `PROXY_SECRET=<random>`, and
      `PUBLIC_BASE_URL=https://<service>.onrender.com` to use the signed media proxy.
-4. Install the addon in Stremio with `https://<service>.onrender.com/manifest.json`.
+4. Install the addon in Stremio with `https://<service>.onrender.com/manifest.json`, or open
+   `https://<service>.onrender.com/configure` to build a filtered install URL.
 
 Pushes to `main` run the GitHub Actions workflow (typecheck, tests, build, Docker build), and Render
 auto-deploys the same commit from GitHub (`autoDeploy: true`). Grant Render's GitHub app access to
@@ -69,15 +73,33 @@ clone a public repository but does not receive push webhooks. You can also deplo
 
 | Route | Purpose |
 |---|---|
+| `GET /configure` | Filter configuration page that builds the add-on URL |
 | `GET /manifest.json` | Stremio manifest (stable version across provider updates) |
+| `GET /<config>/manifest.json` | Manifest for a personalized (filtered) install |
 | `GET /stream/movie/tt0111161.json` | Movie streams |
 | `GET /stream/series/tt0944947:1:1.json` | Series episode streams |
 | `GET /stream/series/tt0944947:1.json` | Season requests (packs and episodes) |
+| `GET /<config>/stream/...` | Streams filtered by the config segment |
 | `GET /health` | Minimal provider/update status (no secrets) |
 | `GET /proxy/<token>` | Signed media proxy (only when `PROXY_ENABLED=true`) |
 
 Addon routes always return HTTP 200 with JSON. Invalid IDs and provider failures produce
-`{"streams":[]}`. `/stream` and `/health` are `Cache-Control: no-store`.
+`{"streams":[]}`. `/stream` and `/health` are `Cache-Control: no-store`. `/configure` is the only
+HTML route.
+
+## Filters
+
+Open `/configure` to choose a maximum and/or minimum resolution and whether streams with unknown
+resolution are included (default: included). The page builds a personalized add-on URL of the form
+`https://<host>/<config>/manifest.json`, where `<config>` is a base64url-encoded JSON document such
+as `{"v":1,"maxRes":720}`. Filters travel in the URL: nothing is stored server-side, so installs
+keep working across restarts, redeploys, and free-tier cold starts. Invalid config segments fall
+back to unfiltered defaults.
+
+Resolution is inferred from provider quality tags and stream titles. Streams whose resolution
+cannot be determined are kept unless the "include unknown resolution" checkbox is cleared. Installing
+the plain `/manifest.json` URL remains supported and returns unfiltered streams. In Stremio, the
+add-on's gear icon opens the configure page with the current settings pre-filled.
 
 ## Configuration
 

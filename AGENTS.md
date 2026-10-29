@@ -22,7 +22,7 @@ CI (`.github/workflows/ci.yml`) runs typecheck, tests, build, and a Docker build
 - `src/providers/sdk/context.ts` replaces `globalThis.fetch` with the provider-facing shim. Internal HTTP (GitHub, Cinemeta, updater, proxy) must use `nativeFetch` from `src/util/nativeFetch.ts`; using global `fetch` there recurses through the shim.
 - Provider snapshots are immutable and SHA-versioned; requests hold refcounted registry leases and retired snapshots stay loaded until leases drain (or 10 minutes). Never mutate bundles or snapshots in place.
 - Fetches of upstream `urls.json` are served from the active snapshot; activation clears the provider URL cache.
-- Addon routes always return HTTP 200 JSON, using `{"streams":[]}` for bad IDs and provider failures; `/stream` and `/health` stay `no-store`.
+- Addon routes always return HTTP 200 JSON, using `{"streams":[]}` for bad IDs and provider failures; `/stream` and `/health` stay `no-store`. `/configure` is the only HTML route; per-user filters are a base64url URL segment (`/<config>/manifest.json`, parsed in `src/addon/userConfig.ts`) and invalid segments fall back to unfiltered defaults.
 - Persisted JSON writes must remain atomic (temp + fsync + rename via `src/util/fs.ts`).
 - Logging is structured JSON with key-based redaction; never log or commit `PROXY_SECRET`, `GITHUB_TOKEN`, debrid keys, or cookies.
 - There is no lint or format script; don't assume ESLint/Prettier.

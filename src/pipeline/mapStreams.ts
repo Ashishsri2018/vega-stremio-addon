@@ -201,7 +201,7 @@ function qualityValue(value: string): number {
   return 0;
 }
 
-function inferQuality(stream: StremioStream): number {
+export function inferQuality(stream: StremioStream): number {
   const sources: string[] = [];
   if (typeof stream.title === "string") {
     sources.push(...stream.title.split("\u2022"));

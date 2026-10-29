@@ -13,8 +13,10 @@ import type {
 import { nativeFetch } from "../util/nativeFetch.js";
 import { createProxyHandler } from "../proxy/server.js";
 import { createProxyToken } from "../proxy/sign.js";
+import { renderConfigurePage } from "./configure.js";
 import { getManifest } from "./manifest.js";
 import { parseStreamId } from "./parseId.js";
+import { filterStreams, parseUserConfig } from "./userConfig.js";
 
 function healthFallback(): HealthReport {
   return {
@@ -92,6 +94,8 @@ async function runStreamRequest(
 
   if (res.writableEnded || res.destroyed) return;
 
+  streams = filterStreams(streams, parseUserConfig(req.params.config));
+
   const secret =
     deps.config.proxyEnabled && deps.config.proxySecret
       ? deps.config.proxySecret
@@ -133,14 +137,25 @@ export function createApp(deps: AddonRoutesDeps): express.Express {
     next();
   });
 
-  app.get("/manifest.json", (req, res) => {
+  const serveManifest: RequestHandler = (req, res) => {
     res.setHeader("Cache-Control", "public, max-age=300");
     res.json(getManifest());
-  });
+  };
+  app.get("/manifest.json", serveManifest);
+  app.get("/:config/manifest.json", serveManifest);
+
+  const serveConfigure: RequestHandler = (req, res) => {
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.type("html").send(renderConfigurePage());
+  };
+  app.get("/configure", serveConfigure);
+  app.get("/:config/configure", serveConfigure);
 
   const streamHandler = createStreamHandler(deps);
-  app.get("/stream/:type/:id.json", streamHandler);
-  app.get("/stream/:type/:id", streamHandler);
+  for (const prefix of ["", "/:config"]) {
+    app.get(`${prefix}/stream/:type/:id.json`, streamHandler);
+    app.get(`${prefix}/stream/:type/:id`, streamHandler);
+  }
 
   if (deps.config.proxyEnabled && deps.config.proxySecret) {
     const proxyHandler = createProxyHandler({

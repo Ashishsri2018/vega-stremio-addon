@@ -134,6 +134,16 @@ describe("filterStreams", () => {
     expect(filtered.map((entry) => entry.title)).toEqual(["1080p", "720p", "480p"]);
   });
 
+  it("filters bare resolution tags without the p suffix", () => {
+    const list = [stream("1080"), stream("720"), stream("HD")];
+    const filtered = filterStreams(list, {
+      maxRes: 720,
+      minRes: null,
+      includeUnknown: false,
+    });
+    expect(filtered.map((entry) => entry.title)).toEqual(["720"]);
+  });
+
   it("can drop every stream with no usable quality", () => {
     const filtered = filterStreams(streams, {
       maxRes: null,

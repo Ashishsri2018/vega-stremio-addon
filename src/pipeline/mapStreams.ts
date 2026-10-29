@@ -192,12 +192,25 @@ export function mapProviderStreams(
   return sortStreams(mapped).slice(0, limit);
 }
 
+const QUALITY_LABELS: Array<[RegExp, number]> = [
+  [/(?<![\p{L}\p{N}])8k(?![\p{L}\p{N}])/u, 4320],
+  [/(?<![\p{L}\p{N}])4k(?![\p{L}\p{N}])/u, 2160],
+  [/(?<![\p{L}\p{N}])uhd(?![\p{L}\p{N}])/u, 2160],
+  [/(?<![\p{L}\p{N}])qhd(?![\p{L}\p{N}])/u, 1440],
+  [/(?<![\p{L}\p{N}])fhd(?![\p{L}\p{N}])/u, 1080],
+];
+
 function qualityValue(value: string): number {
   const lower = value.toLowerCase();
-  const pMatch = /(?<!\d)(\d{3,4})p(?![\p{L}\p{N}])/u.exec(lower);
+  const pMatch = /(?<!\d)(\d{3,4})p(?:\d{1,3})?(?:fps)?(?![\p{L}\p{N}])/u.exec(lower);
   if (pMatch) return Number(pMatch[1]);
-  if (/(?<![\p{L}\p{N}])8k(?![\p{L}\p{N}])/u.test(lower)) return 4320;
-  if (/(?<![\p{L}\p{N}])4k(?![\p{L}\p{N}])/u.test(lower)) return 2160;
+  const bare = /(?<!\d)(4320|2160|1440|1080|720|576|480|360|240)(?![\d\p{L}])/u.exec(
+    lower,
+  );
+  if (bare) return Number(bare[1]);
+  for (const [pattern, resolution] of QUALITY_LABELS) {
+    if (pattern.test(lower)) return resolution;
+  }
   return 0;
 }
 

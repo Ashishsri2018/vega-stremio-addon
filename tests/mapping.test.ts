@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderStream, StremioStream } from "../src/types.js";
 import {
+  inferQuality,
   mapProviderStreams,
   sortStreams,
   type MapStreamsOptions,
@@ -218,5 +219,45 @@ describe("quality ordering", () => {
     const limited = mapProviderStreams(streams, { ...baseOptions, perProviderLimit: 5 });
     expect(limited).toHaveLength(5);
     expect(limited[0].url).toBe("https://cdn.test/24.mp4");
+  });
+});
+
+describe("quality inference", () => {
+  function inferred(
+    title: string,
+    bingeGroup?: string,
+    url = "https://cdn.test/video.mp4",
+  ): number {
+    return inferQuality({
+      name: "P",
+      ...(title ? { title } : {}),
+      url,
+      ...(bingeGroup ? { behaviorHints: { bingeGroup } } : {}),
+    });
+  }
+
+  it("parses resolution tags with and without the p suffix", () => {
+    expect(inferred("Vega \u2022 1080p")).toBe(1080);
+    expect(inferred("Vega \u2022 1080")).toBe(1080);
+    expect(inferred("Vega \u2022 720")).toBe(720);
+    expect(inferred("Vega \u2022 1080p60")).toBe(1080);
+    expect(inferred("Vega \u2022 1080p60fps")).toBe(1080);
+    expect(inferred("", "autoEmbed-1080")).toBe(1080);
+    expect(inferred("", undefined, "https://cdn.test/1920x1080/file.m3u8")).toBe(1080);
+  });
+
+  it("parses quality labels", () => {
+    expect(inferred("Vega \u2022 8K")).toBe(4320);
+    expect(inferred("Vega \u2022 4K")).toBe(2160);
+    expect(inferred("Vega \u2022 UHD")).toBe(2160);
+    expect(inferred("Vega \u2022 QHD")).toBe(1440);
+    expect(inferred("Vega \u2022 FHD")).toBe(1080);
+  });
+
+  it("does not treat codec names, years, or vague labels as resolutions", () => {
+    expect(inferred("Vega \u2022 h264")).toBe(0);
+    expect(inferred("Vega \u2022 x265")).toBe(0);
+    expect(inferred("Movie 2024")).toBe(0);
+    expect(inferred("HD")).toBe(0);
   });
 });

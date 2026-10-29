@@ -441,6 +441,86 @@ describe("StreamPipeline magnets and failures", () => {
   });
 });
 
+describe("StreamPipeline latency guards", () => {
+  function hangingProvider(): ProviderBundle {
+    return makeBundle("hang", "Hang", {
+      posts: {
+        getSearchPosts: () => new Promise<Post[]>(() => undefined),
+      },
+    });
+  }
+
+  it("finishes once collected streams settle", async () => {
+    const fast = movieProvider({
+      value: "fast",
+      display: "Fast",
+      url: "https://fast.test/1080.mp4",
+      quality: "1080p",
+    });
+    const { registry } = makeRegistry([hangingProvider(), fast]);
+    const pipeline = new StreamPipeline({
+      config: testConfig({
+        settleMs: 100,
+        emptyFenceMs: 0,
+        searchTimeoutMs: 5000,
+        globalDeadlineMs: 5000,
+      }),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const startedAt = Date.now();
+    const streams = await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(streams.map((stream) => stream.url)).toEqual(["https://fast.test/1080.mp4"]);
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+  });
+
+  it("returns an empty list at the empty fence when nothing was collected", async () => {
+    const { registry } = makeRegistry([hangingProvider()]);
+    const pipeline = new StreamPipeline({
+      config: testConfig({
+        settleMs: 0,
+        emptyFenceMs: 100,
+        searchTimeoutMs: 5000,
+        globalDeadlineMs: 5000,
+      }),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const startedAt = Date.now();
+    await expect(
+      pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
+    ).resolves.toEqual([]);
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+  });
+
+  it("falls back to the global deadline when both guards are disabled", async () => {
+    const { registry } = makeRegistry([hangingProvider()]);
+    const pipeline = new StreamPipeline({
+      config: testConfig({
+        settleMs: 0,
+        emptyFenceMs: 0,
+        searchTimeoutMs: 5000,
+        globalDeadlineMs: 400,
+      }),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const startedAt = Date.now();
+    await expect(
+      pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
+    ).resolves.toEqual([]);
+    const elapsed = Date.now() - startedAt;
+    expect(elapsed).toBeGreaterThanOrEqual(300);
+    expect(elapsed).toBeLessThan(2000);
+  });
+});
+
 describe("StreamPipeline limits, cache and validation", () => {
   it("caps per-provider streams and the total stream list", async () => {
     const single = movieProvider({

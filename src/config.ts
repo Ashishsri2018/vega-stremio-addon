@@ -20,6 +20,8 @@ export interface AppConfig {
   metaTimeoutMs: number;
   streamTimeoutMs: number;
   globalDeadlineMs: number;
+  settleMs: number;
+  emptyFenceMs: number;
   includeMagnets: boolean;
   proxyEnabled: boolean;
   proxySecret: string | null;
@@ -98,6 +100,8 @@ const schema = z.object({
   META_TIMEOUT_MS: envInt(15000, 1000, 120000),
   STREAM_TIMEOUT_MS: envInt(20000, 1000, 120000),
   GLOBAL_DEADLINE_MS: envInt(45000, 2000, 300000),
+  SETTLE_MS: envInt(8000, 0, 120000),
+  EMPTY_FENCE_MS: envInt(25000, 0, 300000),
   INCLUDE_MAGNETS: envBool(false),
   PROXY_ENABLED: envBool(false),
   PROXY_SECRET: optionalString,
@@ -163,6 +167,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     metaTimeoutMs: value.META_TIMEOUT_MS,
     streamTimeoutMs: value.STREAM_TIMEOUT_MS,
     globalDeadlineMs: value.GLOBAL_DEADLINE_MS,
+    settleMs: value.SETTLE_MS,
+    emptyFenceMs: value.EMPTY_FENCE_MS,
     includeMagnets: value.INCLUDE_MAGNETS,
     proxyEnabled: value.PROXY_ENABLED,
     proxySecret: value.PROXY_SECRET,

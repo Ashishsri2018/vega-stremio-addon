@@ -37,6 +37,7 @@ const MAX_STREAMS_PER_PROVIDER = 20;
 const MAX_STREAM_CALLS_PER_REQUEST = 40;
 const MAX_TOTAL_STREAMS = 200;
 const STREAM_CONCURRENCY_PER_PROVIDER = 3;
+const SETTLE_TICK_MS = 250;
 
 interface Candidate {
   post: Post;
@@ -73,6 +74,7 @@ interface InternalContext {
   streamCallsLeft: number;
   stopped: boolean;
   deadlineHit: boolean;
+  lastProgressAt: number;
   generation: number;
 }
 
@@ -219,6 +221,7 @@ export class StreamPipeline implements StreamHandlerApi {
 
     const lease = this.registry.acquire();
     let deadlineTimer: NodeJS.Timeout | undefined;
+    let settleTimer: NodeJS.Timeout | undefined;
     let abortHandler: (() => void) | undefined;
     const controller = new AbortController();
 
@@ -230,7 +233,8 @@ export class StreamPipeline implements StreamHandlerApi {
       const cached = this.streamCache.get(cacheKey);
       if (cached) return cached.slice();
 
-      const deadlineAt = Date.now() + Math.max(1, this.config.globalDeadlineMs);
+      const startedAt = Date.now();
+      const deadlineAt = startedAt + Math.max(1, this.config.globalDeadlineMs);
       const info = await this.resolveInfo(parsed, controller, deadlineAt, signal);
       if (!info) return [];
 
@@ -245,21 +249,26 @@ export class StreamPipeline implements StreamHandlerApi {
         streamCallsLeft: MAX_STREAM_CALLS_PER_REQUEST,
         stopped: false,
         deadlineHit: false,
+        lastProgressAt: startedAt,
         generation: this.generation,
       };
 
-      let resolveDeadline: ((streams: StremioStream[]) => void) | undefined;
-      const deadlinePromise = new Promise<StremioStream[]>((resolve) => {
-        resolveDeadline = resolve;
+      let resolveEarly: ((streams: StremioStream[]) => void) | undefined;
+      const earlyPromise = new Promise<StremioStream[]>((resolve) => {
+        resolveEarly = resolve;
       });
+      const finishEarly = (): void => {
+        resolveEarly?.(this.finalize(ctx.collected));
+      };
       deadlineTimer = setTimeout(() => {
         if (ctx.stopped) return;
         ctx.stopped = true;
         ctx.deadlineHit = true;
         controller.abort(new TimeoutError("global deadline reached"));
-        resolveDeadline?.(this.finalize(ctx.collected));
+        finishEarly();
       }, Math.max(1, deadlineAt - Date.now()));
       deadlineTimer.unref?.();
+      settleTimer = this.startSettleTimer(ctx, startedAt, controller, finishEarly);
 
       const abortPromise = new Promise<StremioStream[]>((resolve) => {
         if (!signal) return;
@@ -272,7 +281,6 @@ export class StreamPipeline implements StreamHandlerApi {
         signal.addEventListener("abort", abortHandler, { once: true });
       });
 
-      const startedAt = Date.now();
       const work = this.runRequest(ctx, snapshot)
         .then(() => this.finalize(ctx.collected))
         .catch(() => this.finalize(ctx.collected))
@@ -286,7 +294,7 @@ export class StreamPipeline implements StreamHandlerApi {
           }
         });
 
-      const result = await Promise.race([work, deadlinePromise, abortPromise]);
+      const result = await Promise.race([work, earlyPromise, abortPromise]);
 
       if (
         !ctx.stopped &&
@@ -300,6 +308,7 @@ export class StreamPipeline implements StreamHandlerApi {
       return result;
     } finally {
       if (deadlineTimer) clearTimeout(deadlineTimer);
+      if (settleTimer) clearInterval(settleTimer);
       if (abortHandler && signal) signal.removeEventListener("abort", abortHandler);
       lease.release();
     }
@@ -322,6 +331,33 @@ export class StreamPipeline implements StreamHandlerApi {
 
   private streamCacheKey(request: StreamRequest): string {
     return `${request.type}|${request.imdbId}|${request.season ?? ""}|${request.episode ?? ""}`;
+  }
+
+  private startSettleTimer(
+    ctx: InternalContext,
+    startedAt: number,
+    controller: AbortController,
+    finishEarly: () => void,
+  ): NodeJS.Timeout | undefined {
+    const settleMs = Math.max(0, this.config.settleMs);
+    const emptyFenceMs = Math.max(0, this.config.emptyFenceMs);
+    if (settleMs === 0 && emptyFenceMs === 0) return undefined;
+
+    const timer = setInterval(() => {
+      if (ctx.stopped) return;
+      const now = Date.now();
+      const empty = ctx.collected.length === 0;
+      const fenceHit = empty && emptyFenceMs > 0 && now - startedAt >= emptyFenceMs;
+      const settled = !empty && settleMs > 0 && now - ctx.lastProgressAt >= settleMs;
+      if (!fenceHit && !settled) return;
+      ctx.stopped = true;
+      controller.abort(
+        new TimeoutError(settled ? "streams settled" : "empty result fence"),
+      );
+      finishEarly();
+    }, SETTLE_TICK_MS);
+    timer.unref?.();
+    return timer;
   }
 
   private async resolveInfo(
@@ -471,6 +507,7 @@ export class StreamPipeline implements StreamHandlerApi {
     });
     if (ctx.stopped || mapped.length === 0) return;
     ctx.collected.push(...mapped);
+    ctx.lastProgressAt = Date.now();
   }
 
   private async searchProvider(bundle: ProviderBundle, ctx: InternalContext): Promise<Post[]> {

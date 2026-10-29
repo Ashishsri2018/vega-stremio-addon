@@ -101,6 +101,19 @@ cannot be determined are kept unless the "include unknown resolution" checkbox i
 the plain `/manifest.json` URL remains supported and returns unfiltered streams. In Stremio, the
 add-on's gear icon opens the configure page with the current settings pre-filled.
 
+## Response time
+
+Requests stop early instead of always burning the full `GLOBAL_DEADLINE_MS`:
+
+- `SETTLE_MS` (default `8000`): after at least one stream is collected, the request finishes when
+  no new stream arrives for this long. Slow or dead providers no longer block the response.
+- `EMPTY_FENCE_MS` (default `25000`): with no streams collected, the request finishes after this
+  long instead of waiting for the global deadline.
+
+Both guards are disabled with `0`; the global deadline remains the absolute cap. On Render's free
+plan, cold starts (30-60 s) dominate the first request, so a keep-warm ping every ~10 minutes
+avoids most of that cost.
+
 ## Configuration
 
 All settings are environment variables. Invalid values fail fast at startup.
@@ -123,6 +136,8 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `META_TIMEOUT_MS` | `15000` | Per-provider meta/episodes timeout |
 | `STREAM_TIMEOUT_MS` | `20000` | Per-provider stream timeout |
 | `GLOBAL_DEADLINE_MS` | `45000` | Overall request budget (partial results are returned) |
+| `SETTLE_MS` | `8000` | Finish once collected streams stop arriving for this long (`0` disables) |
+| `EMPTY_FENCE_MS` | `25000` | Finish a request with no collected streams after this long (`0` disables) |
 | `INCLUDE_MAGNETS` | `false` | Include torrent/magnet streams (playback needs a debrid client) |
 | `PROXY_ENABLED` | `false` | Enable the signed media proxy |
 | `PROXY_SECRET` | empty | HMAC secret; required when the proxy is enabled |

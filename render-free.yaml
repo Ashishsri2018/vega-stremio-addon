@@ -25,11 +25,14 @@ services:
         value: "false"
       - key: LOG_LEVEL
         value: info
-      # Free-tier latency tuning: finish requests before the global deadline.
+      # Free-tier latency tuning: settle once streams arrive, but never fence
+      # empty results early because slow series providers need the full budget.
       - key: SETTLE_MS
-        value: "5000"
+        value: "8000"
       - key: EMPTY_FENCE_MS
-        value: "15000"
+        value: "0"
+      - key: SEARCH_CONCURRENCY
+        value: "16"
       - key: SEARCH_TIMEOUT_MS
         value: "6000"
       - key: STREAM_TIMEOUT_MS

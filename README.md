@@ -67,10 +67,11 @@ clone a public repository but does not receive push webhooks. You can also deplo
 - The free plan has no persistent disks and spins down when idle. Use `render-free.yaml` instead
   (copy it over `render.yaml` before creating the Blueprint): it stores data in `/tmp/data`, so cold
   starts re-download the snapshot and runtime KV/cookies/settings are lost. Keep provider settings
-  in `PROVIDER_SETTINGS_JSON` on the free plan. The blueprint also sets tighter latency guards
-  (`SETTLE_MS=5000`, `EMPTY_FENCE_MS=15000`) and shorter provider timeouts
-  (`SEARCH_TIMEOUT_MS=6000`, `STREAM_TIMEOUT_MS=15000`) because the free instance's 0.1 CPU is the
-  bottleneck.
+  in `PROVIDER_SETTINGS_JSON` on the free plan. The blueprint disables the empty-result fence
+  (`EMPTY_FENCE_MS=0`) so slow series requests can still return streams, settles after 8s without
+  new streams (`SETTLE_MS=8000`), runs provider searches with `SEARCH_CONCURRENCY=16`, and uses
+  shorter provider timeouts (`SEARCH_TIMEOUT_MS=6000`, `STREAM_TIMEOUT_MS=15000`) because the free
+  instance's 0.1 CPU is the bottleneck.
 
 ## Endpoints
 
@@ -110,8 +111,10 @@ Requests stop early instead of always burning the full `GLOBAL_DEADLINE_MS`:
 
 - `SETTLE_MS` (default `8000`): after at least one stream is collected, the request finishes when
   no new stream arrives for this long. Slow or dead providers no longer block the response.
-- `EMPTY_FENCE_MS` (default `25000`): with no streams collected, the request finishes after this
-  long instead of waiting for the global deadline.
+- `EMPTY_FENCE_MS` (default `0`, disabled): with no streams collected, finish after this long
+  instead of waiting for the global deadline. Keep this disabled on slow hosts: series providers
+  often need more than 25 s to return their first stream, and an early fence makes every series
+  request look empty.
 
 Both guards are disabled with `0`; the global deadline remains the absolute cap. On Render's free
 plan, cold starts (30-60 s) dominate the first request, so a keep-warm ping every ~10 minutes
@@ -134,13 +137,13 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `UPDATE_INTERVAL_MAX_HOURS` | `6` | Maximum check interval |
 | `UPDATE_CONCURRENCY` | `8` | Provider download parallelism |
 | `HTTP_TIMEOUT_MS` | `15000` | SDK transport timeout |
-| `SEARCH_CONCURRENCY` | `8` | Provider search parallelism |
+| `SEARCH_CONCURRENCY` | `16` | Provider search parallelism |
 | `SEARCH_TIMEOUT_MS` | `10000` | Per-provider search timeout |
 | `META_TIMEOUT_MS` | `15000` | Per-provider meta/episodes timeout |
 | `STREAM_TIMEOUT_MS` | `20000` | Per-provider stream timeout |
 | `GLOBAL_DEADLINE_MS` | `45000` | Overall request budget (partial results are returned) |
 | `SETTLE_MS` | `8000` | Finish once collected streams stop arriving for this long (`0` disables) |
-| `EMPTY_FENCE_MS` | `25000` | Finish a request with no collected streams after this long (`0` disables) |
+| `EMPTY_FENCE_MS` | `0` | Finish a request with no collected streams after this long (`0` disables) |
 | `INCLUDE_MAGNETS` | `false` | Include torrent/magnet streams (playback needs a debrid client) |
 | `PROXY_ENABLED` | `false` | Enable the signed media proxy |
 | `PROXY_SECRET` | empty | HMAC secret; required when the proxy is enabled |

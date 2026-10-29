@@ -17,8 +17,9 @@ describe("loadConfig", () => {
     expect(config.settingsFile).toBe("/data/provider-settings.json");
     expect(config.providerSettingsJson).toBeNull();
     expect(config.cinemetaUrl).toBe("https://v3-cinemeta.strem.io");
+    expect(config.searchConcurrency).toBe(16);
     expect(config.settleMs).toBe(8000);
-    expect(config.emptyFenceMs).toBe(25000);
+    expect(config.emptyFenceMs).toBe(0);
   });
 
   it("reads PROVIDER_SETTINGS_JSON and treats blank values as unset", () => {

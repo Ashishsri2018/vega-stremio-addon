@@ -67,7 +67,10 @@ clone a public repository but does not receive push webhooks. You can also deplo
 - The free plan has no persistent disks and spins down when idle. Use `render-free.yaml` instead
   (copy it over `render.yaml` before creating the Blueprint): it stores data in `/tmp/data`, so cold
   starts re-download the snapshot and runtime KV/cookies/settings are lost. Keep provider settings
-  in `PROVIDER_SETTINGS_JSON` on the free plan.
+  in `PROVIDER_SETTINGS_JSON` on the free plan. The blueprint also sets tighter latency guards
+  (`SETTLE_MS=5000`, `EMPTY_FENCE_MS=15000`) and shorter provider timeouts
+  (`SEARCH_TIMEOUT_MS=6000`, `STREAM_TIMEOUT_MS=15000`) because the free instance's 0.1 CPU is the
+  bottleneck.
 
 ## Endpoints
 

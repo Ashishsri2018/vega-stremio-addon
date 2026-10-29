@@ -25,3 +25,12 @@ services:
         value: "false"
       - key: LOG_LEVEL
         value: info
+      # Free-tier latency tuning: finish requests before the global deadline.
+      - key: SETTLE_MS
+        value: "5000"
+      - key: EMPTY_FENCE_MS
+        value: "15000"
+      - key: SEARCH_TIMEOUT_MS
+        value: "6000"
+      - key: STREAM_TIMEOUT_MS
+        value: "15000"

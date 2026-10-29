@@ -11,9 +11,10 @@ name: Keep Render awake
 # monitoring traffic for Render. The documented free-plan suspension risks
 # are outbound bandwidth and instance-hour overages, not inbound pings.
 
+# Schedule disabled — re-enable by uncommenting the schedule block.
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  # schedule:
+  #   - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions: {}

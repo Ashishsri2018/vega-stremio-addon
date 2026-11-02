@@ -73,6 +73,63 @@ clone a public repository but does not receive push webhooks. You can also deplo
   shorter provider timeouts (`SEARCH_TIMEOUT_MS=6000`, `STREAM_TIMEOUT_MS=15000`) because the free
   instance's 0.1 CPU is the bottleneck.
 
+## Deploy to Beamup
+
+Beamup is Stremio's own addon PaaS (`baby-beamup.club`). The live Docker deployment is
+`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`.
+
+Beamup identifies users by GitHub username and deploys over SSH/Dokku. For Dockerfile apps the
+project name **must contain `docker`**: without it Beamup configures the swarm service with
+`command: /start web` (the Herokuish entrypoint), and the container fails with
+`exec: "/start": stat /start: no such file or directory` while the proxy returns 504. This repo's
+`beamup.json` therefore uses `"projectName": "vega-stremio-addon-docker"`.
+
+1. Add an account-level SSH key to the GitHub user Beamup will authenticate:
+   ```bash
+   ssh-keygen -t ed25519 -C beamup-vega-stremio-addon
+   # Add ~/.ssh/id_ed25519.pub at GitHub Settings > SSH and GPG keys
+   ```
+2. Configure and initialize the CLI (tested with `beamup-cli` 1.3.2 via `npx`):
+   ```bash
+   npx beamup-cli config   # host: a.baby-beamup.club, GitHub username: <user>
+   npx beamup-cli init     # writes beamup.json and adds the beamup git remote
+   ```
+   Keep `beamup.json` local; it contains deploy state (`lastCommit`) and is not needed by the image.
+3. Deploy the current commit:
+   ```bash
+   git push beamup HEAD:master --force
+   ```
+4. Set environment variables (the CLI can prompt, or use Dokku directly):
+   ```bash
+   ssh dokku@a.baby-beamup.club config:set <hash>/vega-stremio-addon-docker \
+     LOG_LEVEL=info PROXY_ENABLED=false INCLUDE_MAGNETS=false \
+     SEARCH_CONCURRENCY=16 GLOBAL_DEADLINE_MS=8000 SEARCH_TIMEOUT_MS=4000 \
+     STREAM_TIMEOUT_MS=6000 SETTLE_MS=4000 EMPTY_FENCE_MS=0 \
+     UPDATE_INTERVAL_MIN_HOURS=4 UPDATE_INTERVAL_MAX_HOURS=6
+   ```
+   `<hash>` is the per-user path in the `beamup` remote, for example
+   `dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker`.
+
+Beamup notes:
+
+- No persistent disk is mounted: `/data` is container-local, so a redeploy (or a restart that
+  recreates the container) re-downloads the provider snapshot and loses KV, cookies, and settings.
+  Use `PROVIDER_SETTINGS_JSON` for persistent settings. The server binds only after bootstrap (up to
+  60 s), so requests immediately after a deploy can be sparse or return 504.
+- The swarm service is limited to 1.2 CPU and 1 GB RAM, restarts at most 10 times per 5 minutes
+  with a 60 s delay, and each GitHub user can have at most 20 addons.
+- Beamup's nginx proxy is configured to cache `200`/`302` responses for 2 h (subject to the
+  response's cache headers) and serves stale responses on upstream errors. `/stream` and `/health`
+  send `Cache-Control: no-store`; warm requests still return more streams because the addon's
+  in-memory caches and upstream providers have warmed up.
+- Provider updates keep the normal 4-6 h schedule plus 0-120 s jitter; a fresh deploy bootstraps
+  because `UPDATE_ON_START` defaults to `true`.
+- Beamup has no published acceptable-use policy. Enforcement is manual and report-driven: a ban
+  removes the hashed GitHub username's SSH key and blocks further deploy, config, log, and delete
+  commands. This addon aggregates third-party streaming links, so hosting it on Stremio's PaaS
+  carries copyright and platform risk; Stremio's terms make addon developers responsible for the
+  content they distribute. Self-hosting or Render avoids that platform risk.
+
 ## Endpoints
 
 | Route | Purpose |
@@ -249,3 +306,13 @@ Tests use local fixture HTTP servers and in-memory provider bundles; no network 
 - Provider sites change often. Failures are isolated per provider, logged, and retried on later requests.
 - Upstream has no `LICENSE` file (`package.json` says ISC). Review licensing before distributing a
   public image.
+
+## DMCA
+
+We hereby issue this notice to inform you that these extensions just function like an ordinary
+browser (like your browser) that fetch video files from internet, and do not violate the provisions
+of the Digital Millennium Copyright Act (DMCA). The Content these extensions may access is not
+hosted by us or the Cloudstream 3 application but the websites they are browsing in their autonomous
+mode. It is sole responsibility of the user and his/her countries' or states' law. If you think they
+are violating any intellectual property then please contact the actual file hosts not the owners of
+this repository or the CloudStream 3 app. Thank You.

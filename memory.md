@@ -62,3 +62,61 @@ upgrade to Starter with the disk-enabled `render.yaml` blueprint.
 - Provider-side WAF/site volatility remains the main live failure source; failures are isolated.
 - Uncached series requests on the free Render plan can approach the 45 s global deadline.
 - Upstream code executes in-process with Node privileges; this is an accepted trust boundary per PLAN.
+
+## 2026-11-02 - Beamup deployment
+
+Deployed the same Docker image to Stremio's Beamup PaaS. Live app:
+`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`. Global CLI config
+is `/root/beamup-config.json` (host `a.baby-beamup.club`, GitHub user `Ashishsri2018`);
+`beamup.json` is local state with `projectName: vega-stremio-addon-docker`.
+
+### Setup
+
+- Added an account-level GitHub SSH key (`~/.ssh/id_ed25519`, comment
+  `beamup-vega-stremio-addon`) via `gh api user/keys`; Beamup syncs account keys, not repo deploy
+  keys.
+- Used `beamup-cli` 1.3.2 through `npx`; `beamup init` added the remote
+  `dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker`.
+- First deployment used project name `vega-stremio-addon` and failed: Beamup ran the Herokuish
+  `command: /start web`, producing `exec: "/start": stat /start: no such file or directory` and a
+  504. Deleted that app and redeployed as `vega-stremio-addon-docker`; the Dockerfile path then
+  worked without a `command`.
+- Deploy command: `git push beamup HEAD:master --force`.
+
+### Configuration
+
+Applied via `ssh dokku@a.baby-beamup.club config:set a38b6dd4fcd1/vega-stremio-addon-docker ...`:
+`LOG_LEVEL=info INCLUDE_MAGNETS=false PROXY_ENABLED=false UPDATE_INTERVAL_MIN_HOURS=4
+UPDATE_INTERVAL_MAX_HOURS=6 SETTLE_MS=4000 EMPTY_FENCE_MS=0 SEARCH_CONCURRENCY=16
+SEARCH_TIMEOUT_MS=4000 STREAM_TIMEOUT_MS=6000 GLOBAL_DEADLINE_MS=8000`.
+
+### Verification
+
+- `/health`: `ok`, 39/39 providers active, `pending: []`, snapshot SHA
+  `260cac86a528e8e162ce9e0c75743296efdc6f44`; last success `2026-11-02T14:11:47.657Z`, next check
+  `2026-11-02T18:56:02.981Z` (~4h44m).
+- `/manifest.json`: HTTP 200; cold response took ~7.5 s.
+- Filters: `{"v":1,"maxRes":720}` returned 56 streams with none above 720p (14 unknown-resolution
+  streams kept by default); strict `{"v":1,"maxRes":720,"includeUnknown":false}` returned 50 with a
+  720p maximum; `{"v":1,"minRes":1080}` worked; invalid config segments fell back to unfiltered.
+- Warm movie/series requests returned 60-79 streams; Beamup's cold proxy path is less reliable and
+  may return fewer streams or 504.
+
+### Platform findings
+
+- Beamup is Stremio's Dokku/swarm PaaS. Swarm services get 1.2 CPU and 1 GB RAM, restart at most 10
+  times per 5 min with a 60 s delay, and each GitHub user can have at most 20 addons.
+- No persistent volume is mounted for this app: `/data` is container-local, so provider snapshots,
+  KV, cookies, and file settings are lost when the container is recreated (redeploy). Use
+  `PROVIDER_SETTINGS_JSON`. The server binds only after bootstrap, capped at 60 s
+  (`BOOTSTRAP_TIMEOUT_MS`).
+- Beamup's nginx proxy is configured to cache `200`/`302` for 2 h (subject to response cache
+  headers), uses `proxy_cache_lock`, and serves stale on upstream errors. `/stream` and `/health`
+  are `no-store`.
+- No published AUP/terms page. Enforcement is manual via abuse reports; `beamup-ban-user` removes
+  the user's key from the host's `authorized_keys` and adds the hashed GitHub username to
+  `/etc/beamup/ban_list.txt`, blocking further deploy/config/logs/delete. The addon linter only
+  validates the Stremio manifest. Hosting this addon on Beamup carries copyright/platform risk.
+- Old broken app `a38b6dd4fcd1-vega-stremio-addon` was deleted with `delete-addon`.
+
+No source changes were needed for the Beamup deployment.

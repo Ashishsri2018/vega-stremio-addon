@@ -95,6 +95,35 @@ Tokens are base64url JSON (`u` target, `h` headers, `e` expiry) plus an HMAC-SHA
 The handler validates tokens, enforces HTTP(S) and DNS-based SSRF checks on every redirect, streams
 range responses, rewrites HLS playlist URIs with per-segment tokens, and logs only host/path/status.
 
+## Deployment
+
+The same `Dockerfile` and entrypoint run on Render and Beamup; both rely on the entrypoint briefly
+starting as root to fix `/data` ownership before dropping to `node`.
+
+- **Render:** `render.yaml` provisions a 1 GB disk at `/data`; `render-free.yaml` uses ephemeral
+  `/tmp/data`. Pushes to `main` auto-deploy the built image.
+- **Beamup:** Stremio's Dokku/swarm PaaS. `beamup-cli` creates an SSH remote
+  `dokku@a.baby-beamup.club:<hash>/<project>` and deploys via a force-push to `master`. For a
+  Dockerfile app the project name must contain `docker`; Beamup selects the swarm service command
+  from that name. Without it, the service runs `/start web` and the container exits with
+  `exec: "/start": stat /start: no such file or directory`.
+- **Beamup runtime:** 1.2 CPU / 1 GB RAM per service, restart at most 10 times per 5 minutes with a
+  60 s delay, 400 apps per swarm, and 20 addons per GitHub user. No persistent volume is mounted,
+  so `/data` is container-local and is lost when the container is recreated (redeploy). The server
+  binds only after bootstrap (snapshot download, capped at 60 s), so cold requests may be sparse or
+  504.
+- **Edge proxy:** Beamup's nginx is configured to cache `200`/`302` for 2 h (subject to response
+  cache headers), enables `proxy_cache_lock`, and serves stale responses on upstream errors.
+  `/stream` and `/health` are `no-store`; cached responses mostly affect manifest and configure
+  routes. Warm stream responses are still larger because the addon's in-memory caches and upstream
+  providers have warmed up.
+- **Updates:** both hosts use the same 4-6 h schedule with 0-120 s jitter. `UPDATE_ON_START=true`
+  causes a fresh Beamup container to bootstrap immediately because there is no snapshot on disk.
+- **Policy:** Beamup publishes no AUP. Enforcement is manual and report-driven via a ban list keyed
+  to the hashed GitHub username; the SSH key is removed and further deploy/config/log/delete
+  commands are blocked. This addon aggregates third-party streaming links, so Beamup carries
+  copyright/platform risk.
+
 ## Persistence
 
 All JSON writes use temp file + fsync + rename. Provider modules are versioned by SHA path, so

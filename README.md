@@ -33,49 +33,15 @@ npm run build
 PORT=7000 DATA_DIR=./data node dist/index.js
 ```
 
-## Deploy to Render
+## Deployment
 
-The repository includes a Render Blueprint (`render.yaml`): a Docker web service on the Starter
-plan with a 1 GB persistent disk mounted at `/data`, so snapshots and provider-written KV survive
-restarts.
+The active public deployment runs on **Beamup**:
+`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`. The Render
+blueprint is kept as an optional/legacy self-hosting path and is not the active deployment.
 
-Live instance: `https://vega-stremio-addon-qtjz.onrender.com/manifest.json` (free plan, Oregon).
+## Deploy to Beamup (active deployment)
 
-1. Push the repository to GitHub.
-2. In Render, choose **New +** > **Blueprint** and select the repository. Render reads
-   `render.yaml`. Make sure Render's GitHub app can access the repository, otherwise push webhooks
-   (and therefore auto-deploy) are not delivered.
-3. Optionally add environment variables in the Render dashboard:
-   - `GITHUB_TOKEN` for higher GitHub API rate limits.
-   - `PROVIDER_SETTINGS_JSON` with the same JSON accepted by `provider-settings.json`; the
-     environment value takes precedence over the file.
-   - `PROXY_ENABLED=true`, `PROXY_SECRET=<random>`, and
-     `PUBLIC_BASE_URL=https://<service>.onrender.com` to use the signed media proxy.
-4. Install the addon in Stremio with `https://<service>.onrender.com/manifest.json`, or open
-   `https://<service>.onrender.com/configure` to build a filtered install URL.
-
-Pushes to `main` run the GitHub Actions workflow (typecheck, tests, build, Docker build), and Render
-auto-deploys the same commit from GitHub (`autoDeploy: true`). Grant Render's GitHub app access to
-the repository under GitHub **Settings > Applications > Render > Configure**; without it, Render can
-clone a public repository but does not receive push webhooks. You can also deploy manually with
-`render deploys create <service-id>` or use the service's Deploy Hook.
-
-- Render injects `PORT`; leave it unset.
-- The container entrypoint starts as root only to fix ownership of the mounted disk, then drops to
-  the unprivileged `node` user.
-- Render probes `/health`. The first boot downloads the 39-provider snapshot (about 1.8 MB).
-- The free plan has no persistent disks and spins down when idle. Use `render-free.yaml` instead
-  (copy it over `render.yaml` before creating the Blueprint): it stores data in `/tmp/data`, so cold
-  starts re-download the snapshot and runtime KV/cookies/settings are lost. Keep provider settings
-  in `PROVIDER_SETTINGS_JSON` on the free plan. The blueprint disables the empty-result fence
-  (`EMPTY_FENCE_MS=0`) so slow series requests can still return streams, settles after 8s without
-  new streams (`SETTLE_MS=8000`), runs provider searches with `SEARCH_CONCURRENCY=16`, and uses
-  shorter provider timeouts (`SEARCH_TIMEOUT_MS=6000`, `STREAM_TIMEOUT_MS=15000`) because the free
-  instance's 0.1 CPU is the bottleneck.
-
-## Deploy to Beamup
-
-Beamup is Stremio's own addon PaaS (`baby-beamup.club`). The live Docker deployment is
+Beamup is Stremio's own addon PaaS (`baby-beamup.club`). The active Docker deployment is
 `https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`.
 
 Beamup identifies users by GitHub username and deploys over SSH/Dokku. For Dockerfile apps the
@@ -128,7 +94,50 @@ Beamup notes:
   removes the hashed GitHub username's SSH key and blocks further deploy, config, log, and delete
   commands. This addon aggregates third-party streaming links, so hosting it on Stremio's PaaS
   carries copyright and platform risk; Stremio's terms make addon developers responsible for the
-  content they distribute. Self-hosting or Render avoids that platform risk.
+  content they distribute. Self-hosting, or running an alternative like Render, avoids that
+  platform risk.
+
+## Deploy to Render (optional/legacy)
+
+The repository also includes a Render Blueprint (`render.yaml`): a Docker web service on the Starter
+plan with a 1 GB persistent disk mounted at `/data`, so snapshots and provider-written KV survive
+restarts. This path is optional and not the active deployment.
+
+Previous Render instance: `https://vega-stremio-addon-qtjz.onrender.com/manifest.json` (free plan,
+Oregon).
+
+1. Push the repository to GitHub.
+2. In Render, choose **New +** > **Blueprint** and select the repository. Render reads
+   `render.yaml`. Make sure Render's GitHub app can access the repository, otherwise push webhooks
+   (and therefore auto-deploy) are not delivered.
+3. Optionally add environment variables in the Render dashboard:
+   - `GITHUB_TOKEN` for higher GitHub API rate limits.
+   - `PROVIDER_SETTINGS_JSON` with the same JSON accepted by `provider-settings.json`; the
+     environment value takes precedence over the file.
+   - `PROXY_ENABLED=true`, `PROXY_SECRET=<random>`, and
+     `PUBLIC_BASE_URL=https://<service>.onrender.com` to use the signed media proxy.
+4. Install the addon in Stremio with `https://<service>.onrender.com/manifest.json`, or open
+   `https://<service>.onrender.com/configure` to build a filtered install URL.
+
+Pushes to `main` run the GitHub Actions workflow (typecheck, tests, build, Docker build). If you
+configure this Render blueprint, it auto-deploys the same commit from GitHub (`autoDeploy: true`).
+Grant Render's GitHub app access to the repository under GitHub **Settings > Applications > Render >
+Configure**; without it, Render can clone a public repository but does not receive push webhooks.
+You can also deploy manually with
+`render deploys create <service-id>` or use the service's Deploy Hook.
+
+- Render injects `PORT`; leave it unset.
+- The container entrypoint starts as root only to fix ownership of the mounted disk, then drops to
+  the unprivileged `node` user.
+- Render probes `/health`. The first boot downloads the 39-provider snapshot (about 1.8 MB).
+- The free plan has no persistent disks and spins down when idle. Use `render-free.yaml` instead
+  (copy it over `render.yaml` before creating the Blueprint): it stores data in `/tmp/data`, so cold
+  starts re-download the snapshot and runtime KV/cookies/settings are lost. Keep provider settings
+  in `PROVIDER_SETTINGS_JSON` on the free plan. The blueprint disables the empty-result fence
+  (`EMPTY_FENCE_MS=0`) so slow series requests can still return streams, settles after 8s without
+  new streams (`SETTLE_MS=8000`), runs provider searches with `SEARCH_CONCURRENCY=16`, and uses
+  shorter provider timeouts (`SEARCH_TIMEOUT_MS=6000`, `STREAM_TIMEOUT_MS=15000`) because the free
+  instance's 0.1 CPU is the bottleneck.
 
 ## Endpoints
 
@@ -173,9 +182,9 @@ Requests stop early instead of always burning the full `GLOBAL_DEADLINE_MS`:
   often need more than 25 s to return their first stream, and an early fence makes every series
   request look empty.
 
-Both guards are disabled with `0`; the global deadline remains the absolute cap. On Render's free
-plan, cold starts (30-60 s) dominate the first request, so a keep-warm ping every ~10 minutes
-avoids most of that cost.
+Both guards are disabled with `0`; the global deadline remains the absolute cap. On Beamup and on
+Render's free plan, cold starts (30-60 s) dominate the first request; Render deployments can use a
+keep-warm ping every ~10 minutes to avoid most of that cost.
 
 ## Configuration
 
@@ -235,8 +244,8 @@ Mount an optional JSON file at `$DATA_DIR/provider-settings.json` (or `SETTINGS_
 - `skipTimings: false` (default) seeds every `*_skipTimings` key to `false`, avoiding TheIntroDB calls.
 - `kv` entries use exact provider KV keys and override schema defaults and `skipTimings`.
 - Provider-written values (for example tokens obtained at runtime) are preserved unless overridden.
-- On Render or other ephemeral platforms, set `PROVIDER_SETTINGS_JSON` to the same JSON object; it
-  takes precedence over the file and is useful when no persistent disk is available.
+- On Beamup, Render, or other ephemeral platforms, set `PROVIDER_SETTINGS_JSON` to the same JSON
+  object; it takes precedence over the file and is useful when no persistent disk is available.
 - Malformed files or JSON are ignored with an error log; the last good configuration stays active.
 - Reload without a restart: `docker kill -s HUP vega-addon` (or `kill -HUP <pid>`).
 

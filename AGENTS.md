@@ -29,9 +29,9 @@ CI (`.github/workflows/ci.yml`) runs typecheck, tests, build, and a Docker build
 
 ## Deployment
 
-- Pushes to `main` auto-deploy to Render (`render.yaml` uses a persistent disk; `render-free.yaml` uses ephemeral `/tmp/data`). Keep `main` green.
-- Beamup (`baby-beamup.club`) is a separate, manual, GitHub-keyed deployment. Live Docker app: `https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`. `beamup.json` is local deploy state (`projectName`, `lastCommit`) and must stay untracked.
+- The active public deployment is Beamup (`baby-beamup.club`): `https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`. It is a manual, GitHub-keyed deployment; pushes to GitHub `main` run CI only and do not update the active app. `beamup.json` is local deploy state (`projectName`, `lastCommit`) and must stay untracked.
+- Deploy the active app with `git push beamup HEAD:master --force` after `npx beamup-cli config` and `npx beamup-cli init`. Set env with `ssh dokku@a.baby-beamup.club config:set <hash>/<project> KEY=...`. Beamup syncs account-level GitHub SSH keys, not repository deploy keys.
 - Beamup deploys this repo's `Dockerfile`. The project name **must contain `docker`**; otherwise Beamup injects the Herokuish `command: /start web`, causing `exec: "/start": stat /start: no such file or directory` and a 504.
-- Deploy with `git push beamup HEAD:master --force` after `npx beamup-cli config` and `npx beamup-cli init`. Set env with `ssh dokku@a.baby-beamup.club config:set <hash>/<project> KEY=...`. Beamup syncs account-level GitHub SSH keys, not repository deploy keys.
 - Beamup mounts no persistent volume for this app: `/data` is ephemeral, so use `PROVIDER_SETTINGS_JSON`. Swarm limits are 1.2 CPU / 1 GB RAM; 20 addons per GitHub user. Bootstrap can delay listening up to 60 s, and cold proxied requests may 504.
 - Beamup has no published AUP. Bans are manual/report-driven and keyed to the hashed GitHub username (SSH key removed; deploy/config/logs/delete blocked). This addon aggregates third-party streaming links, so hosting it on Stremio's PaaS is a copyright/platform risk. Do not add multi-account or ban-evasion logic.
+- Render (`render.yaml` / `render-free.yaml`) remains an optional/legacy self-hosting path, not the active deployment. Keep `main` green for CI.

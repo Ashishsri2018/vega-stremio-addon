@@ -97,12 +97,11 @@ range responses, rewrites HLS playlist URIs with per-segment tokens, and logs on
 
 ## Deployment
 
-The same `Dockerfile` and entrypoint run on Render and Beamup; both rely on the entrypoint briefly
-starting as root to fix `/data` ownership before dropping to `node`.
+The same `Dockerfile` and entrypoint run on Beamup (the active deployment) and Render (an optional
+legacy path); both rely on the entrypoint briefly starting as root to fix `/data` ownership before
+dropping to `node`.
 
-- **Render:** `render.yaml` provisions a 1 GB disk at `/data`; `render-free.yaml` uses ephemeral
-  `/tmp/data`. Pushes to `main` auto-deploy the built image.
-- **Beamup:** Stremio's Dokku/swarm PaaS. `beamup-cli` creates an SSH remote
+- **Beamup (active):** Stremio's Dokku/swarm PaaS. `beamup-cli` creates an SSH remote
   `dokku@a.baby-beamup.club:<hash>/<project>` and deploys via a force-push to `master`. For a
   Dockerfile app the project name must contain `docker`; Beamup selects the swarm service command
   from that name. Without it, the service runs `/start web` and the container exits with
@@ -112,12 +111,15 @@ starting as root to fix `/data` ownership before dropping to `node`.
   so `/data` is container-local and is lost when the container is recreated (redeploy). The server
   binds only after bootstrap (snapshot download, capped at 60 s), so cold requests may be sparse or
   504.
+- **Render (optional/legacy):** `render.yaml` provisions a 1 GB disk at `/data`;
+  `render-free.yaml` uses ephemeral `/tmp/data`. Pushes to `main` auto-deploy the built image when a
+  Render service is configured.
 - **Edge proxy:** Beamup's nginx is configured to cache `200`/`302` for 2 h (subject to response
   cache headers), enables `proxy_cache_lock`, and serves stale responses on upstream errors.
   `/stream` and `/health` are `no-store`; cached responses mostly affect manifest and configure
   routes. Warm stream responses are still larger because the addon's in-memory caches and upstream
   providers have warmed up.
-- **Updates:** both hosts use the same 4-6 h schedule with 0-120 s jitter. `UPDATE_ON_START=true`
+- **Updates:** both configurations use the same 4-6 h schedule with 0-120 s jitter. `UPDATE_ON_START=true`
   causes a fresh Beamup container to bootstrap immediately because there is no snapshot on disk.
 - **Policy:** Beamup publishes no AUP. Enforcement is manual and report-driven via a ban list keyed
   to the hashed GitHub username; the SSH key is removed and further deploy/config/log/delete

@@ -120,3 +120,19 @@ SEARCH_TIMEOUT_MS=4000 STREAM_TIMEOUT_MS=6000 GLOBAL_DEADLINE_MS=8000`.
 - Old broken app `a38b6dd4fcd1-vega-stremio-addon` was deleted with `delete-addon`.
 
 No source changes were needed for the Beamup deployment.
+
+## 2026-11-03 - Beamup is the active deployment
+
+- The active public deployment is Beamup
+  (`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`). The Render
+  blueprint remains in the repo only as an optional/legacy self-hosting path.
+- Pushes to GitHub `main` run CI but do not update the Beamup app. Beamup deploys stay manual via
+  `git push beamup HEAD:master --force`; config changes use `ssh dokku@a.baby-beamup.club
+  config:set <hash>/vega-stremio-addon-docker KEY=...`.
+- Configured ShowBox by setting `PROVIDER_SETTINGS_JSON` with `kv.febboxCookie` as
+  `ui=<Febbox JWT>`. The raw JWT alone is rejected by Febbox; the `ui=` prefix is required and was
+  verified against `video_quality_list` (authenticated response instead of `Please login`).
+- A GramCinema bearer token was provided, but no active provider in `Zenda-Cross/vega-providers` or
+  this addon requires it, so it was not stored.
+- Updated README, AGENTS.md, and architecture.md to state that Beamup is active and Render is
+  optional/legacy. Pushed the docs update to GitHub; no Beamup redeploy was performed.

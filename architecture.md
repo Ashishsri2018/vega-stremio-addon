@@ -125,7 +125,10 @@ briefly starting as root to fix `/data` ownership before dropping to `node`.
 - **Deployment automation:** Pushes to `main` run the GitHub Actions workflow; after `verify` and
   `docker` succeed, the `deploy-beamup` job force-pushes to Beamup using the
   `BEAMUP_SSH_PRIVATE_KEY` repository secret (plus optional `BEAMUP_KNOWN_HOSTS` and
-  `BEAMUP_REMOTE`).
+  `BEAMUP_REMOTE`). Non-secret settings are committed in `deploy/beamup.env`, copied into the image,
+  and sourced at container start, so they survive app deletion and recreation. CI then applies
+  `BEAMUP_EXTRA_ENV` secrets with `scripts/apply-beamup-env.sh`, one changed key at a time because
+  Beamup accepts only one `KEY=value` per `config:set`.
 - **Beamup runtime:** 1.2 CPU / 1 GB RAM per service, restart at most 10 times per 5 minutes with a
   60 s delay, 400 apps per swarm, and 20 addons per GitHub user. No persistent volume is mounted,
   so `/data` is container-local and is lost when the container is recreated (redeploy). The server

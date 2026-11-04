@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "update": "node dist/cli/update.js"
+    "update": "node dist/cli/update.js",
+    "probe": "node dist/cli/probe.js"
   },
   "dependencies": {
     "axios": "^1.7.9",

@@ -106,3 +106,8 @@ jobs:
               exit "$status"
             fi
           fi
+      - name: Apply Beamup secrets
+        env:
+          BEAMUP_REMOTE: ${{ secrets.BEAMUP_REMOTE }}
+          BEAMUP_EXTRA_ENV: ${{ secrets.BEAMUP_EXTRA_ENV }}
+        run: ./scripts/apply-beamup-env.sh

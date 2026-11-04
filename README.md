@@ -46,6 +46,7 @@ Beamup automatically. Configure these repository secrets once:
 | `BEAMUP_SSH_PRIVATE_KEY` | yes | Private half of a dedicated SSH key |
 | `BEAMUP_KNOWN_HOSTS` | no | Pinned `a.baby-beamup.club` host key |
 | `BEAMUP_REMOTE` | no | Override the Dokku remote (defaults to this app) |
+| `BEAMUP_EXTRA_ENV` | no | Newline-separated secret `KEY=value` settings |
 
 ```bash
 ssh-keygen -t ed25519 -C "github-actions-beamup" -f beamup_deploy -N ""
@@ -58,6 +59,25 @@ rm beamup_deploy
 Beamup syncs account-level GitHub SSH keys, not per-repository deploy keys, so the public key must
 be added to the GitHub account. Keep the private key only in the encrypted repository secret and
 never commit it. When `BEAMUP_KNOWN_HOSTS` is unset, the workflow falls back to `ssh-keyscan`.
+
+Beamup stores environment variables on the app. Normal redeploys keep them, but deleting the app
+deletes them. Non-secret settings live in [`deploy/beamup.env`](deploy/beamup.env), which is copied
+into the image and loaded by `docker-entrypoint.sh` at every container start, so they survive app
+deletion and redeploys without extra Dokku commands. The file is shell-compatible and takes precedence
+over Beamup app env for the keys it defines. Put secret settings such as `PROVIDER_SETTINGS_JSON` or
+`PROXY_SECRET` in the `BEAMUP_EXTRA_ENV` repository secret as newline-separated `KEY=value` entries:
+
+```bash
+gh secret set BEAMUP_EXTRA_ENV <<'EOF'
+PROVIDER_SETTINGS_JSON={"skipTimings":false,"kv":{"febboxCookie":"ui=..."}}
+EOF
+```
+
+CI applies `BEAMUP_EXTRA_ENV` after each deploy. Beamup accepts only one `KEY=value` per `config:set`
+command, so the script reads the current value first and sets each changed secret individually.
+
+Provider-written KV/cookies still live under ephemeral `/data`, so they are lost on every redeploy
+unless represented in `PROVIDER_SETTINGS_JSON`.
 
 ## Deploy to Beamup (active deployment)
 
@@ -85,13 +105,9 @@ project name **must contain `docker`**: without it Beamup configures the swarm s
    ```bash
    git push beamup HEAD:master --force
    ```
-4. Set environment variables (the CLI can prompt, or use Dokku directly):
+4. Apply secrets after an app recreation (non-secret settings load from the image on startup):
    ```bash
-   ssh dokku@a.baby-beamup.club config:set <hash>/vega-stremio-addon-docker \
-     LOG_LEVEL=info PROXY_ENABLED=false INCLUDE_MAGNETS=false \
-     SEARCH_CONCURRENCY=16 GLOBAL_DEADLINE_MS=8000 SEARCH_TIMEOUT_MS=4000 \
-     STREAM_TIMEOUT_MS=6000 SETTLE_MS=4000 EMPTY_FENCE_MS=0 \
-     UPDATE_INTERVAL_MIN_HOURS=4 UPDATE_INTERVAL_MAX_HOURS=6
+   BEAMUP_SSH_KEY=~/.ssh/id_ed25519 ./scripts/apply-beamup-env.sh
    ```
    `<hash>` is the per-user path in the `beamup` remote, for example
    `dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker`.
@@ -208,6 +224,9 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `PROVIDER_CACHE_TTL_MS` | `21600000` | Search/mapping cache TTL |
 | `STREAM_CACHE_TTL_MS` | `60000` | Stream cache TTL |
 
+The active Beamup deployment overrides some defaults in `deploy/beamup.env` (`SEARCH_CONCURRENCY=32`,
+`SEARCH_TIMEOUT_MS=4000`, `STREAM_TIMEOUT_MS=6000`, `GLOBAL_DEADLINE_MS=8000`, `SETTLE_MS=4000`).
+
 Never log or commit `PROXY_SECRET`, `GITHUB_TOKEN`, debrid keys, or cookies.
 
 ## Provider settings
@@ -247,6 +266,13 @@ Useful keys: Torrentio debrid service/API key and custom instance; `febboxCookie
   the next cycle even when the HEAD SHA is unchanged.
 - The active and previous snapshots are kept on disk. Older snapshots are removed.
 - Manual update: `docker exec vega-addon node dist/cli/update.js`.
+- Probe providers: `docker exec vega-addon node dist/cli/probe.js Inception` (locally
+  `DATA_DIR=./data npm run probe -- Inception`). By default this runs search, meta, and stream
+  resolution with `SEARCH_TIMEOUT_MS`, `META_TIMEOUT_MS`, and `STREAM_TIMEOUT_MS`, then prints
+  `ok`/`empty`/`no-streams`/`error` plus post/link/stream counts per provider. Add `--search-only`
+  to stop after `getSearchPosts()`. For series use `--type series --season 1 [--episode 2]`. Use
+  `npm run --silent probe -- --json Inception` (or `node dist/cli/probe.js --json Inception`) for
+  pipeable JSON. The command exits non-zero when any provider errors or returns no streams.
 - Pin or roll back: set `PROVIDER_SHA=<sha>` and restart, or run the CLI with that variable.
 
 Set `DISABLED_PROVIDERS=torrentio,internetArchive,youtube` to stop those providers from being

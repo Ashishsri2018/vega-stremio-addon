@@ -121,7 +121,9 @@ briefly starting as root to fix `/data` ownership before dropping to `node`.
   `dokku@a.baby-beamup.club:<hash>/<project>` and deploys via a force-push to `master`. For a
   Dockerfile app the project name must contain `docker`; Beamup selects the swarm service command
   from that name. Without it, the service runs `/start web` and the container exits with
-  `exec: "/start": stat /start: no such file or directory`.
+  `exec: "/start": stat /start: no such file or directory`. Pre-flight `beamup-lint` validates the
+  new container; an app that exits at startup (for example, env values outside the zod bounds in
+  `src/config.ts`) is rejected as "not a valid Stremio addon" and the old container keeps serving.
 - **Deployment automation:** Pushes to `main` run the GitHub Actions workflow; after `verify` and
   `docker` succeed, the `deploy-beamup` job force-pushes to Beamup using the
   `BEAMUP_SSH_PRIVATE_KEY` repository secret (plus optional `BEAMUP_KNOWN_HOSTS` and
@@ -138,7 +140,9 @@ briefly starting as root to fix `/data` ownership before dropping to `node`.
   cache headers), enables `proxy_cache_lock`, and serves stale responses on upstream errors.
   `/stream` and `/health` are `no-store`; cached responses mostly affect manifest and configure
   routes. Warm stream responses are still larger because the addon's in-memory caches and upstream
-  providers have warmed up.
+  providers have warmed up. The gateway also cuts long upstream requests: 504s were observed at
+  17-19 s wall time with a 20 s global deadline, so `deploy/beamup.env` keeps
+  `GLOBAL_DEADLINE_MS=10000`; per-provider budgets above that are clamped to the remaining budget.
 - **Updates:** the 4-6 h schedule uses 0-120 s jitter. `UPDATE_ON_START=true` causes a fresh Beamup
   container to bootstrap immediately because there is no snapshot on disk.
 - **Policy:** Beamup publishes no AUP. Enforcement is manual and report-driven via a ban list keyed

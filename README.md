@@ -90,6 +90,12 @@ project name **must contain `docker`**: without it Beamup configures the swarm s
 `exec: "/start": stat /start: no such file or directory` while the proxy returns 504. This repo's
 `beamup.json` therefore uses `"projectName": "vega-stremio-addon-docker"`.
 
+Beamup runs a pre-flight `beamup-lint` on the new container. If the app crashes at startup — for
+example because an env value is outside the zod bounds in `src/config.ts` — the push is rejected
+with `beamup-lint: <app> is not a valid Stremio addon, refusing to deploy it`. The message does not
+name the bad setting, so check the config validation limits (for example, `SEARCH_CONCURRENCY` must
+be 1-40) and reproduce locally with the same env before retrying; the old container keeps serving.
+
 1. Add an account-level SSH key to the GitHub user Beamup will authenticate:
    ```bash
    ssh-keygen -t ed25519 -C beamup-vega-stremio-addon
@@ -224,8 +230,11 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `PROVIDER_CACHE_TTL_MS` | `21600000` | Search/mapping cache TTL |
 | `STREAM_CACHE_TTL_MS` | `60000` | Stream cache TTL |
 
-The active Beamup deployment overrides some defaults in `deploy/beamup.env` (`SEARCH_CONCURRENCY=32`,
-`SEARCH_TIMEOUT_MS=4000`, `STREAM_TIMEOUT_MS=6000`, `GLOBAL_DEADLINE_MS=8000`, `SETTLE_MS=4000`).
+The active Beamup deployment overrides some defaults in `deploy/beamup.env` (`SEARCH_CONCURRENCY=40`,
+`SEARCH_TIMEOUT_MS=5000`, `META_TIMEOUT_MS=8000`, `STREAM_TIMEOUT_MS=8000`,
+`GLOBAL_DEADLINE_MS=10000`, `SETTLE_MS=4000`, `EMPTY_FENCE_MS=0`). Beamup's proxy starts returning
+504 when upstream work runs near 17-19 s, so keep `GLOBAL_DEADLINE_MS` at 10 s or less there;
+per-provider timeouts above the global deadline are clamped to the remaining budget.
 
 Never log or commit `PROXY_SECRET`, `GITHUB_TOKEN`, debrid keys, or cookies.
 

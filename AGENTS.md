@@ -14,6 +14,7 @@ Official Vega app source is checked out at `/root/iptv/vega-app` (`https://githu
 - `typecheck` only covers `src/`; `tests/` are excluded in `tsconfig.json`, so Vitest is the only check for test files.
 - Tests require no network: they use local fixture HTTP servers and in-memory provider bundles.
 - `npm run update` runs `dist/cli/update.js`; build first.
+- `npm run probe -- <query>` runs per-provider search/meta/stream diagnostics (`--search-only`, `--json`); build first.
 - Local run: `DATA_DIR=./data node dist/index.js` — `DATA_DIR` defaults to `/data`.
 
 CI (`.github/workflows/ci.yml`) runs typecheck, tests, build, and a Docker build on PRs and pushes to `main`; pushes to `main` also deploy to Beamup after those jobs pass.
@@ -28,6 +29,7 @@ CI (`.github/workflows/ci.yml`) runs typecheck, tests, build, and a Docker build
 - Persisted JSON writes must remain atomic (temp + fsync + rename via `src/util/fs.ts`).
 - Logging is structured JSON with key-based redaction; never log or commit `PROXY_SECRET`, `GITHUB_TOKEN`, debrid keys, or cookies.
 - There is no lint or format script; don't assume ESLint/Prettier.
+- Invalid env values abort startup (zod in `src/config.ts`). On Beamup this surfaces as the pre-flight error "beamup-lint: ... is not a valid Stremio addon, refusing to deploy it"; reproduce locally with the same env and check the schema bounds (`SEARCH_CONCURRENCY` is 1-40).
 
 ## Deployment
 
@@ -35,6 +37,7 @@ CI (`.github/workflows/ci.yml`) runs typecheck, tests, build, and a Docker build
 - Beamup env survives normal redeploys but is deleted with the app. Non-secret settings are committed in `deploy/beamup.env`, copied into the image, and sourced by `docker-entrypoint.sh` at every start, so they survive deletion/redeploys and override Beamup app env for the keys they contain. Secret settings (`PROVIDER_SETTINGS_JSON`, `PROXY_SECRET`, etc.) belong in the `BEAMUP_EXTRA_ENV` repository secret as newline-separated `KEY=value` lines; CI applies them with `scripts/apply-beamup-env.sh`, which sets each changed key individually because Beamup accepts only one `KEY=value` per `config:set`; never commit secrets.
 - Manual deploy fallback (verified 2026-11-04): `npx beamup-cli config a.baby-beamup.club <github-user>` writes `/root/beamup-config.json`; `npx beamup-cli init <project-name>` writes `beamup.json` (it may warn that the `beamup` remote already exists, which is harmless); then `git push beamup HEAD:master --force`. Apply secrets with `./scripts/apply-beamup-env.sh`; non-secret `deploy/beamup.env` values load at container start. Beamup accepts only one `KEY=value` per `config:set`. Beamup syncs account-level GitHub SSH keys, not repository deploy keys. After the push, Beamup takes about 60 s to swap containers: verify `/configure` contains the expected controls and make one stream request before reporting success.
 - Push code to GitHub with `git push origin main`. Use `[skip ci]` in the commit message for docs-only changes; they do not require a Beamup redeploy.
+- Deployed timeouts live in `deploy/beamup.env` (currently search 5 s, meta 8 s, stream 8 s, global 10 s, settle 4 s, concurrency 40). Beamup's proxy returned 504 at 17-19 s wall time with a 20 s global deadline, so keep `GLOBAL_DEADLINE_MS` at 10 s or less; per-provider budgets above the global deadline are clamped to the remaining budget.
 - Beamup deploys this repo's `Dockerfile`. The project name **must contain `docker`**; otherwise Beamup injects the Herokuish `command: /start web`, causing `exec: "/start": stat /start: no such file or directory` and a 504.
 - Beamup mounts no persistent volume for this app: `/data` is ephemeral, so use `PROVIDER_SETTINGS_JSON`. Swarm limits are 1.2 CPU / 1 GB RAM; 20 addons per GitHub user. Bootstrap can delay listening up to 60 s, and cold proxied requests may 504.
 - Beamup has no published AUP. Bans are manual/report-driven and keyed to the hashed GitHub username (SSH key removed; deploy/config/logs/delete blocked). This addon aggregates third-party streaming links, so hosting it on Stremio's PaaS is a copyright/platform risk. Do not add multi-account or ban-evasion logic.

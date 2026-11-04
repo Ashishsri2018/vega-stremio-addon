@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderStream, StremioStream } from "../src/types.js";
 import {
+  inferFileSizeBytes,
   inferQuality,
   mapProviderStreams,
   sortStreams,
@@ -259,5 +260,27 @@ describe("quality inference", () => {
     expect(inferred("Vega \u2022 x265")).toBe(0);
     expect(inferred("Movie 2024")).toBe(0);
     expect(inferred("HD")).toBe(0);
+  });
+});
+
+describe("file size inference", () => {
+  function size(title: string): number {
+    return inferFileSizeBytes({ name: "P", title, url: "https://cdn.test/file.mp4" });
+  }
+
+  it("parses human-readable sizes", () => {
+    expect(size("720p - 656 MB - 1.5 MB/s")).toBe(656 * 1024 ** 2);
+    expect(size("1080p - 1.29 GB - 3 MB/s")).toBe(Math.round(1.29 * 1024 ** 3));
+    expect(size("4K [3.57 GB]")).toBe(Math.round(3.57 * 1024 ** 3));
+    expect(size("1,5 GB")).toBe(Math.round(1.5 * 1024 ** 3));
+    expect(size("512 MiB")).toBe(512 * 1024 ** 2);
+  });
+
+  it("ignores speeds and text without a size", () => {
+    expect(size("720p - 1.5 MB/s")).toBe(0);
+    expect(size("ORG - 27 MB/S")).toBe(0);
+    expect(size("360p - 490 KB/s")).toBe(0);
+    expect(size("1080p")).toBe(0);
+    expect(size("")).toBe(0);
   });
 });

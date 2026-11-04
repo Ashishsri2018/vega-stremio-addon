@@ -106,7 +106,14 @@ describe("manifest", () => {
 });
 
 describe("configured addon", () => {
-  const segment = encodeUserConfig({ maxRes: 720, minRes: null, includeUnknown: true });
+  const segment = encodeUserConfig({
+    maxRes: 720,
+    minRes: null,
+    includeUnknown: true,
+    maxSizeMB: null,
+    includeUnknownSize: true,
+    subtitleLangs: [],
+  });
 
   it("serves the same manifest under a config segment", async () => {
     const base = await startApp(createApp(makeDeps()));
@@ -153,7 +160,14 @@ describe("stream filtering", () => {
   it("applies the config segment and keeps unknown quality by default", async () => {
     const pipeline: StreamHandlerApi = { handle: vi.fn(async () => streams) };
     const base = await startApp(createApp(makeDeps({ pipeline })));
-    const segment = encodeUserConfig({ maxRes: 720, minRes: null, includeUnknown: true });
+    const segment = encodeUserConfig({
+      maxRes: 720,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
+    });
 
     const response = await nativeFetch(`${base}/${segment}/stream/movie/tt0111161.json`);
     expect(response.status).toBe(200);
@@ -172,6 +186,9 @@ describe("stream filtering", () => {
       maxRes: 720,
       minRes: null,
       includeUnknown: false,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
     });
 
     const response = await nativeFetch(`${base}/${segment}/stream/movie/tt0111161`);
@@ -184,12 +201,45 @@ describe("stream filtering", () => {
   it("enforces a minimum resolution", async () => {
     const pipeline: StreamHandlerApi = { handle: vi.fn(async () => streams) };
     const base = await startApp(createApp(makeDeps({ pipeline })));
-    const segment = encodeUserConfig({ maxRes: null, minRes: 1080, includeUnknown: false });
+    const segment = encodeUserConfig({
+      maxRes: null,
+      minRes: 1080,
+      includeUnknown: false,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
+    });
 
     const response = await nativeFetch(
       `${base}/${segment}/stream/series/tt0944947:1:1.json`,
     );
     expect(urlsOf(await response.json())).toEqual(["https://cdn.example.com/1080.mp4"]);
+  });
+
+  it("applies a maximum file size and keeps unknown sizes by default", async () => {
+    const sized: StremioStream[] = [
+      { name: "P", title: "1080p - 5 GB", url: "https://cdn.example.com/5gb.mp4" },
+      { name: "P", title: "720p - 700 MB", url: "https://cdn.example.com/700mb.mp4" },
+      { name: "P", title: "Auto", url: "https://cdn.example.com/auto.mp4" },
+    ];
+    const pipeline: StreamHandlerApi = { handle: vi.fn(async () => sized) };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+    const segment = encodeUserConfig({
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: 2048,
+      includeUnknownSize: true,
+      subtitleLangs: [],
+    });
+
+    const response = await nativeFetch(
+      `${base}/${segment}/stream/movie/tt0111161.json`,
+    );
+    expect(urlsOf(await response.json())).toEqual([
+      "https://cdn.example.com/700mb.mp4",
+      "https://cdn.example.com/auto.mp4",
+    ]);
   });
 
   it("falls back to defaults for invalid or unknown config segments", async () => {
@@ -207,6 +257,40 @@ describe("stream filtering", () => {
       expect(response.status).toBe(200);
       expect(urlsOf(await response.json())).toEqual(streams.map((entry) => entry.url));
     }
+  });
+
+  it("filters subtitle tracks by language from the config segment", async () => {
+    const withSubs: StremioStream[] = [
+      {
+        name: "P",
+        title: "1080p",
+        url: "https://cdn.example.com/1080.mp4",
+        subtitles: [
+          { id: "en", url: "https://subs.example/en.vtt", lang: "en" },
+          { id: "es", url: "https://subs.example/es.vtt", lang: "es" },
+          { id: "pt-br", url: "https://subs.example/pt-br.vtt", lang: "pt-BR" },
+        ],
+      },
+    ];
+    const pipeline: StreamHandlerApi = { handle: vi.fn(async () => withSubs) };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+    const segment = encodeUserConfig({
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: ["en", "pt"],
+    });
+
+    const response = await nativeFetch(
+      `${base}/${segment}/stream/movie/tt0111161.json`,
+    );
+    const body = (await response.json()) as { streams: StremioStream[] };
+    expect(body.streams[0]?.subtitles?.map((track) => track.lang)).toEqual([
+      "en",
+      "pt-BR",
+    ]);
   });
 
   it("leaves the unprefixed route unfiltered", async () => {

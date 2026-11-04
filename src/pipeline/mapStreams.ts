@@ -229,6 +229,31 @@ export function inferQuality(stream: StremioStream): number {
   return best;
 }
 
+const FILE_SIZE_UNITS: Record<string, number> = {
+  tib: 1024 ** 4,
+  tb: 1024 ** 4,
+  gib: 1024 ** 3,
+  gb: 1024 ** 3,
+  mib: 1024 ** 2,
+  mb: 1024 ** 2,
+};
+
+const FILE_SIZE_PATTERN =
+  /(\d+(?:[.,]\d+)?)\s*(TiB|GiB|MiB|TB|GB|MB)(?![a-z0-9]|\s*\/\s*s)/gi;
+
+export function inferFileSizeBytes(stream: StremioStream): number {
+  if (typeof stream.title !== "string" || !stream.title) return 0;
+
+  let best = 0;
+  for (const match of stream.title.matchAll(FILE_SIZE_PATTERN)) {
+    const value = Number.parseFloat(match[1].replace(",", "."));
+    if (!Number.isFinite(value)) continue;
+    const bytes = value * (FILE_SIZE_UNITS[match[2].toLowerCase()] ?? 0);
+    if (bytes > best) best = bytes;
+  }
+  return Math.round(best);
+}
+
 function formatRank(url: string): number {
   let pathname: string;
   try {

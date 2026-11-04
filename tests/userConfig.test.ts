@@ -25,13 +25,34 @@ describe("encodeUserConfig", () => {
   });
 
   it("omits unset fields and round-trips through parseUserConfig", () => {
-    const config = { maxRes: 1080, minRes: 720, includeUnknown: false };
+    const config = {
+      maxRes: 1080,
+      minRes: 720,
+      includeUnknown: false,
+      maxSizeMB: 4096,
+      includeUnknownSize: false,
+      subtitleLangs: ["en", "pt-br"],
+    };
     expect(parseUserConfig(encodeUserConfig(config))).toEqual(config);
 
-    const onlyMax = { maxRes: 720, minRes: null, includeUnknown: true };
+    const onlyMax = {
+      maxRes: 720,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
+    };
     expect(parseUserConfig(encodeUserConfig(onlyMax))).toEqual(onlyMax);
 
-    const noUnknown = { maxRes: null, minRes: null, includeUnknown: false };
+    const noUnknown = {
+      maxRes: null,
+      minRes: null,
+      includeUnknown: false,
+      maxSizeMB: null,
+      includeUnknownSize: false,
+      subtitleLangs: [],
+    };
     expect(parseUserConfig(encodeUserConfig(noUnknown))).toEqual(noUnknown);
   });
 });
@@ -55,6 +76,11 @@ describe("parseUserConfig", () => {
       { v: 1, maxRes: 100 },
       { v: 1, minRes: 1080, maxRes: 720 },
       { v: 1, includeUnknown: "no" },
+      { v: 1, maxSizeMB: "2GB" },
+      { v: 1, maxSizeMB: 0 },
+      { v: 1, includeUnknownSize: "no" },
+      { v: 1, subtitleLangs: "en" },
+      { v: 1, subtitleLangs: ["not a language"] },
       "not an object",
     ];
     for (const value of invalid) {
@@ -67,6 +93,9 @@ describe("parseUserConfig", () => {
       maxRes: 720,
       minRes: null,
       includeUnknown: true,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
     });
     expect(parseUserConfig(segmentOf({} as Record<string, unknown>))).toEqual(
       DEFAULT_USER_CONFIG,
@@ -93,6 +122,9 @@ describe("filterStreams", () => {
       maxRes: 720,
       minRes: null,
       includeUnknown: true,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
     });
     expect(filtered.map((entry) => entry.title ?? "unlabeled")).toEqual([
       "720p",
@@ -107,6 +139,9 @@ describe("filterStreams", () => {
       maxRes: 720,
       minRes: null,
       includeUnknown: false,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
     });
     expect(filtered.map((entry) => entry.title)).toEqual(["720p", "480p"]);
   });
@@ -116,6 +151,9 @@ describe("filterStreams", () => {
       maxRes: null,
       minRes: 1080,
       includeUnknown: true,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
     });
     expect(filtered.map((entry) => entry.title ?? "unlabeled")).toEqual([
       "2160p",
@@ -130,6 +168,9 @@ describe("filterStreams", () => {
       maxRes: 1080,
       minRes: 480,
       includeUnknown: false,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
     });
     expect(filtered.map((entry) => entry.title)).toEqual(["1080p", "720p", "480p"]);
   });
@@ -140,6 +181,9 @@ describe("filterStreams", () => {
       maxRes: 720,
       minRes: null,
       includeUnknown: false,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
     });
     expect(filtered.map((entry) => entry.title)).toEqual(["720"]);
   });
@@ -149,6 +193,9 @@ describe("filterStreams", () => {
       maxRes: null,
       minRes: null,
       includeUnknown: false,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
     });
     expect(filtered.map((entry) => entry.title)).toEqual([
       "2160p",
@@ -156,5 +203,136 @@ describe("filterStreams", () => {
       "720p",
       "480p",
     ]);
+  });
+});
+
+describe("subtitle language filtering", () => {
+  function subtitled(tracks: Array<{ lang: string; url: string }>): StremioStream {
+    return {
+      name: "Provider",
+      title: "1080p",
+      url: "https://cdn.example.com/movie.mp4",
+      subtitles: tracks.map((track, index) => ({
+        id: `sub-${index}`,
+        url: track.url,
+        lang: track.lang,
+      })),
+    };
+  }
+
+  it("normalizes language codes when encoding", () => {
+    const segment = encodeUserConfig({
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      subtitleLangs: ["EN", "en", "Pt_BR", ""],
+    });
+    expect(parseUserConfig(segment).subtitleLangs).toEqual(["en", "pt-br"]);
+  });
+
+  it("keeps only tracks matching the configured languages", () => {
+    const input = subtitled([
+      { lang: "en", url: "https://subs.example/en.vtt" },
+      { lang: "en-US", url: "https://subs.example/en-us.vtt" },
+      { lang: "es", url: "https://subs.example/es.vtt" },
+      { lang: "pt-BR", url: "https://subs.example/pt-br.vtt" },
+    ]);
+    const filtered = filterStreams([input], {
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      subtitleLangs: ["en", "pt"],
+    });
+
+    expect(filtered[0]?.subtitles?.map((track) => track.lang)).toEqual([
+      "en",
+      "en-US",
+      "pt-BR",
+    ]);
+    expect(input.subtitles).toHaveLength(4);
+  });
+
+  it("drops the subtitles field when no track matches", () => {
+    const input = subtitled([{ lang: "es", url: "https://subs.example/es.vtt" }]);
+    const filtered = filterStreams([input], {
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      subtitleLangs: ["en"],
+    });
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]).not.toHaveProperty("subtitles");
+  });
+
+  it("leaves streams without subtitles untouched", () => {
+    const plain: StremioStream = {
+      name: "Provider",
+      url: "https://cdn.example.com/plain.mp4",
+    };
+    const filtered = filterStreams([plain], {
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      subtitleLangs: ["en"],
+    });
+    expect(filtered[0]).toBe(plain);
+  });
+});
+
+describe("file size filtering", () => {
+  it("drops streams above the maximum size and keeps unknown sizes", () => {
+    const list = [
+      stream("720p - 656 MB"),
+      stream("1080p - 1.29 GB"),
+      stream("4K - 3.57 GB"),
+      stream("Auto"),
+    ];
+    const filtered = filterStreams(list, {
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: 2048,
+      includeUnknownSize: true,
+      subtitleLangs: [],
+    });
+
+    expect(filtered.map((entry) => entry.title)).toEqual([
+      "720p - 656 MB",
+      "1080p - 1.29 GB",
+      "Auto",
+    ]);
+  });
+
+  it("drops unknown sizes when disabled", () => {
+    const list = [stream("720p - 656 MB"), stream("Auto"), stream("720p - 1.5 MB/s")];
+    const filtered = filterStreams(list, {
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: 2048,
+      includeUnknownSize: false,
+      subtitleLangs: [],
+    });
+
+    expect(filtered.map((entry) => entry.title)).toEqual(["720p - 656 MB"]);
+  });
+
+  it("combines resolution and size filters", () => {
+    const list = [
+      stream("2160p - 1 GB"),
+      stream("1080p - 5 GB"),
+      stream("720p - 700 MB"),
+    ];
+    const filtered = filterStreams(list, {
+      maxRes: 1080,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: 2048,
+      includeUnknownSize: true,
+      subtitleLangs: [],
+    });
+
+    expect(filtered.map((entry) => entry.title)).toEqual(["720p - 700 MB"]);
   });
 });

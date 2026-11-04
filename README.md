@@ -159,17 +159,25 @@ HTML route.
 
 ## Filters
 
-Open `/configure` to choose a maximum and/or minimum resolution and whether streams with unknown
-resolution are included (default: included). The page builds a personalized add-on URL of the form
+Open `/configure` to choose a maximum and/or minimum resolution, a maximum file size, whether
+streams with unknown resolution or size are included (default: included), and which subtitle
+languages to keep. The page builds a personalized add-on URL of the form
 `https://<host>/<config>/manifest.json`, where `<config>` is a base64url-encoded JSON document such
-as `{"v":1,"maxRes":720}`. Filters travel in the URL: nothing is stored server-side, so installs
-keep working across restarts, redeploys, and free-tier cold starts. Invalid config segments fall
-back to unfiltered defaults.
+as `{"v":1,"maxRes":720}`, `{"v":1,"maxSizeMB":2048}`, or
+`{"v":1,"subtitleLangs":["en","pt"]}`. Filters travel in the URL: nothing is stored server-side, so
+installs keep working across restarts, redeploys, and free-tier cold starts. Invalid config segments
+fall back to unfiltered defaults.
 
-Resolution is inferred from provider quality tags and stream titles. Streams whose resolution
-cannot be determined are kept unless the "include unknown resolution" checkbox is cleared. Installing
-the plain `/manifest.json` URL remains supported and returns unfiltered streams. In Stremio, the
-add-on's gear icon opens the configure page with the current settings pre-filled.
+Resolution is inferred from provider quality tags, stream titles, and stream URLs. Streams whose
+resolution cannot be determined are kept unless the "include unknown resolution" checkbox is
+cleared. File size is heuristic: it is parsed from human-readable values such as `656 MB` or
+`1.29 GB` in stream titles (speeds like `1.5 MB/s` are ignored), because many providers do not
+report size. Streams without a parseable size are kept unless the "include unknown file size"
+checkbox is cleared. When subtitle languages are selected, each stream keeps only matching tracks
+(region variants such as `pt-BR` match `pt`) and streams with no matching tracks are still returned
+without subtitles. Leaving the field blank keeps all subtitles. Installing the plain
+`/manifest.json` URL remains supported and returns unfiltered streams. In Stremio, the add-on's
+gear icon opens the configure page with the current settings pre-filled.
 
 ## Response time
 

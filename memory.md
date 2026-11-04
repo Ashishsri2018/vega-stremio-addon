@@ -136,3 +136,32 @@ No source changes were needed for the Beamup deployment.
   this addon requires it, so it was not stored.
 - Updated README, AGENTS.md, and architecture.md to state that Beamup is active and Render is
   optional/legacy. Pushed the docs update to GitHub; no Beamup redeploy was performed.
+
+## 2026-11-04 - Subtitle language and file size filters
+
+Added two per-user filters beyond resolution, kept in the same base64url URL segment and applied
+after the shared stream cache:
+
+- `subtitleLangs`: keeps only matching subtitle tracks. Language matching is case-insensitive,
+  accepts `_`/`-` separators, and treats region variants as their base language (`pt-BR` matches
+  `pt`). Streams with no matching tracks are returned without subtitles.
+- `maxSizeMB`: filters on human-readable sizes parsed from stream titles (`656 MB`, `1.29 GB`,
+  `512 MiB`). Speeds such as `1.5 MB/s`, `27 MB/S`, and `490 KB/s` are ignored. Size metadata is
+  provider-dependent, so `includeUnknownSize` defaults to true; `includeUnknown` still controls
+  unknown resolution.
+- `/configure` now exposes "Maximum file size", "Include streams with unknown file size", and
+  "Subtitle languages" (comma-separated codes). `/configure` and README were updated.
+
+Verification:
+
+- `npm run typecheck && npm test && npm run build`: 256 tests green.
+- Deployed commit `b267bbb` to Beamup with `git push beamup HEAD:master --force`; live `/configure`
+  shows the new controls.
+- Live size filter `{"v":1,"maxSizeMB":2048}` on `tt0944947:1:1`: 0 streams above 2 GB, 6 sized
+  streams, unknown-size streams retained.
+- Live subtitle filter `{"v":1,"subtitleLangs":["en"]}` on `tt4574334:1:1`: 3 tracks, all English.
+- GitHub `main` pushed to `b267bbb`. Docs-only follow-up will be pushed with `[skip ci]`.
+
+Size coverage is sparse: GoT had sizes on 9/26 streams; Stranger Things had 0/47. The filter only
+removes streams when a size is parseable, so most providers' unknown-size streams remain unless the
+toggle is cleared.

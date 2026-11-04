@@ -7,7 +7,7 @@ Self-hosted Stremio addon that serves movie and series streams from the 39 enabl
 - Provider code is downloaded from GitHub at runtime and executed in-process.
 - Upstream is checked every 4-6 hours and new provider bundles are hot-swapped without a restart.
 - Direct links are returned with the HTTP headers players need; an optional signed proxy is included.
-- Per-user filters (max/min resolution) are encoded in the add-on URL; nothing is stored server-side.
+- Per-user filters (resolution, file size, subtitle languages) are encoded in the add-on URL; nothing is stored server-side.
 - No admin HTTP API. Only `/configure`, `/manifest.json`, `/stream/...`, `/health`, and (when enabled)
   `/proxy/...`.
 

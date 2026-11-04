@@ -83,11 +83,28 @@ Provider bundles expect a `providerContext` with axios, cheerio, browser headers
 
 Caches (search 10m, mapping 6h, streams 60s) are in-memory and cleared on activation.
 
+## User filters
+
+Per-user filters are encoded as a base64url JSON segment in the URL (`/<config>/...`) and parsed in
+`src/addon/userConfig.ts`; invalid segments fall back to unfiltered defaults. Filtering runs after
+the pipeline returns, so cached stream lists stay shared across configs.
+
+- `maxRes` / `minRes`: resolution inferred from quality tags, titles, binge groups, and URLs.
+- `maxSizeMB`: file size parsed heuristically from human-readable values in stream titles
+  (`656 MB`, `1.29 GB`); speeds such as `1.5 MB/s` are ignored. No per-stream HEAD requests.
+- `subtitleLangs`: keeps only matching subtitle tracks; region variants such as `pt-BR` match `pt`.
+  Streams are retained without subtitles when nothing matches.
+- `includeUnknown` / `includeUnknownSize`: unknown-resolution and unknown-size streams are kept by
+  default and can be excluded explicitly.
+
+The `/configure` page builds these URLs in the browser; no filter state is stored server-side.
+
 ## HTTP surface
 
 `src/addon/routes.ts` adds permissive CORS, manifest, stream routes, health, optional proxy, JSON
-404s. Stream/health responses are `no-store`; errors never leak stack traces or secrets. Health is
-built from persisted state plus the active registry, with no settings values or URLs.
+404s, and the HTML `/configure` page. Stream/health responses are `no-store`; errors never leak
+stack traces or secrets. Health is built from persisted state plus the active registry, with no
+settings values or URLs.
 
 ## Proxy
 

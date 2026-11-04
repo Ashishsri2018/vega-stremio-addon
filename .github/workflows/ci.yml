@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -44,3 +44,48 @@ jobs:
           tags: vega-stremio-addon:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy-beamup:
+    name: Deploy to Beamup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [verify, docker]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    environment:
+      name: beamup
+      url: https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json
+    concurrency:
+      group: deploy-beamup
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH
+        env:
+          BEAMUP_SSH_PRIVATE_KEY: ${{ secrets.BEAMUP_SSH_PRIVATE_KEY }}
+          BEAMUP_KNOWN_HOSTS: ${{ secrets.BEAMUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BEAMUP_SSH_PRIVATE_KEY:-}" ]; then
+            echo "::error::BEAMUP_SSH_PRIVATE_KEY repository secret is not set"
+            exit 1
+          fi
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$BEAMUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/beamup"
+          chmod 600 "$HOME/.ssh/beamup"
+          if [ -n "${BEAMUP_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$BEAMUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -H a.baby-beamup.club > "$HOME/.ssh/known_hosts"
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts"
+      - name: Push to Beamup
+        env:
+          BEAMUP_REMOTE: ${{ secrets.BEAMUP_REMOTE }}
+        run: |
+          set -euo pipefail
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/beamup -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          remote="${BEAMUP_REMOTE:-dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker}"
+          git push "$remote" HEAD:master --force

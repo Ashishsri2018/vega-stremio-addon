@@ -36,8 +36,28 @@ PORT=7000 DATA_DIR=./data node dist/index.js
 ## Deployment
 
 The active public deployment runs on **Beamup**:
-`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`. The Render
-blueprint is kept as an optional/legacy self-hosting path and is not the active deployment.
+`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`.
+
+Pushes to `main` run CI and, after typecheck, tests, build, and the Docker build pass, deploy to
+Beamup automatically. Configure these repository secrets once:
+
+| Secret | Required | Value |
+|---|---|---|
+| `BEAMUP_SSH_PRIVATE_KEY` | yes | Private half of a dedicated SSH key |
+| `BEAMUP_KNOWN_HOSTS` | no | Pinned `a.baby-beamup.club` host key |
+| `BEAMUP_REMOTE` | no | Override the Dokku remote (defaults to this app) |
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-beamup" -f beamup_deploy -N ""
+gh ssh-key add beamup_deploy.pub --title "GitHub Actions Beamup deploy"
+gh secret set BEAMUP_SSH_PRIVATE_KEY < beamup_deploy
+ssh-keyscan a.baby-beamup.club | gh secret set BEAMUP_KNOWN_HOSTS
+rm beamup_deploy
+```
+
+Beamup syncs account-level GitHub SSH keys, not per-repository deploy keys, so the public key must
+be added to the GitHub account. Keep the private key only in the encrypted repository secret and
+never commit it. When `BEAMUP_KNOWN_HOSTS` is unset, the workflow falls back to `ssh-keyscan`.
 
 ## Deploy to Beamup (active deployment)
 
@@ -94,50 +114,7 @@ Beamup notes:
   removes the hashed GitHub username's SSH key and blocks further deploy, config, log, and delete
   commands. This addon aggregates third-party streaming links, so hosting it on Stremio's PaaS
   carries copyright and platform risk; Stremio's terms make addon developers responsible for the
-  content they distribute. Self-hosting, or running an alternative like Render, avoids that
-  platform risk.
-
-## Deploy to Render (optional/legacy)
-
-The repository also includes a Render Blueprint (`render.yaml`): a Docker web service on the Starter
-plan with a 1 GB persistent disk mounted at `/data`, so snapshots and provider-written KV survive
-restarts. This path is optional and not the active deployment.
-
-Previous Render instance: `https://vega-stremio-addon-qtjz.onrender.com/manifest.json` (free plan,
-Oregon).
-
-1. Push the repository to GitHub.
-2. In Render, choose **New +** > **Blueprint** and select the repository. Render reads
-   `render.yaml`. Make sure Render's GitHub app can access the repository, otherwise push webhooks
-   (and therefore auto-deploy) are not delivered.
-3. Optionally add environment variables in the Render dashboard:
-   - `GITHUB_TOKEN` for higher GitHub API rate limits.
-   - `PROVIDER_SETTINGS_JSON` with the same JSON accepted by `provider-settings.json`; the
-     environment value takes precedence over the file.
-   - `PROXY_ENABLED=true`, `PROXY_SECRET=<random>`, and
-     `PUBLIC_BASE_URL=https://<service>.onrender.com` to use the signed media proxy.
-4. Install the addon in Stremio with `https://<service>.onrender.com/manifest.json`, or open
-   `https://<service>.onrender.com/configure` to build a filtered install URL.
-
-Pushes to `main` run the GitHub Actions workflow (typecheck, tests, build, Docker build). If you
-configure this Render blueprint, it auto-deploys the same commit from GitHub (`autoDeploy: true`).
-Grant Render's GitHub app access to the repository under GitHub **Settings > Applications > Render >
-Configure**; without it, Render can clone a public repository but does not receive push webhooks.
-You can also deploy manually with
-`render deploys create <service-id>` or use the service's Deploy Hook.
-
-- Render injects `PORT`; leave it unset.
-- The container entrypoint starts as root only to fix ownership of the mounted disk, then drops to
-  the unprivileged `node` user.
-- Render probes `/health`. The first boot downloads the 39-provider snapshot (about 1.8 MB).
-- The free plan has no persistent disks and spins down when idle. Use `render-free.yaml` instead
-  (copy it over `render.yaml` before creating the Blueprint): it stores data in `/tmp/data`, so cold
-  starts re-download the snapshot and runtime KV/cookies/settings are lost. Keep provider settings
-  in `PROVIDER_SETTINGS_JSON` on the free plan. The blueprint disables the empty-result fence
-  (`EMPTY_FENCE_MS=0`) so slow series requests can still return streams, settles after 8s without
-  new streams (`SETTLE_MS=8000`), runs provider searches with `SEARCH_CONCURRENCY=16`, and uses
-  shorter provider timeouts (`SEARCH_TIMEOUT_MS=6000`, `STREAM_TIMEOUT_MS=15000`) because the free
-  instance's 0.1 CPU is the bottleneck.
+  content they distribute. Self-hosting avoids that platform risk.
 
 ## Endpoints
 
@@ -190,9 +167,9 @@ Requests stop early instead of always burning the full `GLOBAL_DEADLINE_MS`:
   often need more than 25 s to return their first stream, and an early fence makes every series
   request look empty.
 
-Both guards are disabled with `0`; the global deadline remains the absolute cap. On Beamup and on
-Render's free plan, cold starts (30-60 s) dominate the first request; Render deployments can use a
-keep-warm ping every ~10 minutes to avoid most of that cost.
+Both guards are disabled with `0`; the global deadline remains the absolute cap. On Beamup, cold
+starts (30-60 s) dominate the first request; a keep-warm ping every ~10 minutes avoids most of that
+cost.
 
 ## Configuration
 
@@ -210,6 +187,7 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `UPDATE_INTERVAL_MIN_HOURS` | `4` | Minimum check interval |
 | `UPDATE_INTERVAL_MAX_HOURS` | `6` | Maximum check interval |
 | `UPDATE_CONCURRENCY` | `8` | Provider download parallelism |
+| `DISABLED_PROVIDERS` | empty | Comma-separated provider values to skip at stream time (they still install and update) |
 | `HTTP_TIMEOUT_MS` | `15000` | SDK transport timeout |
 | `SEARCH_CONCURRENCY` | `16` | Provider search parallelism |
 | `SEARCH_TIMEOUT_MS` | `10000` | Per-provider search timeout |
@@ -252,8 +230,8 @@ Mount an optional JSON file at `$DATA_DIR/provider-settings.json` (or `SETTINGS_
 - `skipTimings: false` (default) seeds every `*_skipTimings` key to `false`, avoiding TheIntroDB calls.
 - `kv` entries use exact provider KV keys and override schema defaults and `skipTimings`.
 - Provider-written values (for example tokens obtained at runtime) are preserved unless overridden.
-- On Beamup, Render, or other ephemeral platforms, set `PROVIDER_SETTINGS_JSON` to the same JSON
-  object; it takes precedence over the file and is useful when no persistent disk is available.
+- On Beamup or other ephemeral platforms, set `PROVIDER_SETTINGS_JSON` to the same JSON object; it
+  takes precedence over the file and is useful when no persistent disk is available.
 - Malformed files or JSON are ignored with an error log; the last good configuration stays active.
 - Reload without a restart: `docker kill -s HUP vega-addon` (or `kill -HUP <pid>`).
 
@@ -270,6 +248,11 @@ Useful keys: Torrentio debrid service/API key and custom instance; `febboxCookie
 - The active and previous snapshots are kept on disk. Older snapshots are removed.
 - Manual update: `docker exec vega-addon node dist/cli/update.js`.
 - Pin or roll back: set `PROVIDER_SHA=<sha>` and restart, or run the CLI with that variable.
+
+Set `DISABLED_PROVIDERS=torrentio,internetArchive,youtube` to stop those providers from being
+queried for streams. Disabled providers are still downloaded, installed, and kept current by the
+normal update schedule; only stream requests skip them. Values are the upstream `value` field and
+are matched case-insensitively.
 
 ## Media proxy
 

@@ -200,6 +200,37 @@ describe("StreamPipeline movie flow", () => {
     expect(streams[1].name).toBe("Alpha");
   });
 
+  it("skips providers listed in disabledProviders", async () => {
+    const disabledStream = vi.fn(async ({ link }: { link: string }) => [
+      { server: "Torrentio", link, quality: "1080p" },
+    ]);
+    const torrentio = movieProvider({
+      value: "torrentio",
+      display: "Torrentio",
+      url: "https://torrentio.test/1080.mp4",
+      stream: { getStream: disabledStream },
+    });
+    const archive = movieProvider({
+      value: "internetArchive",
+      display: "Internet Archive",
+      url: "https://archive.test/720.mp4",
+      quality: "720p",
+    });
+    const { registry } = makeRegistry([torrentio, archive]);
+    const pipeline = new StreamPipeline({
+      config: testConfig({ disabledProviders: ["TorrentIO"] }),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const streams = await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(streams.map((stream) => stream.url)).toEqual([
+      "https://archive.test/720.mp4",
+    ]);
+    expect(disabledStream).not.toHaveBeenCalled();
+  });
+
   it("passes debrid-style direct http links", async () => {
     const provider = movieProvider({
       value: "debrid",

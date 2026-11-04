@@ -194,6 +194,7 @@ export class StreamPipeline implements StreamHandlerApi {
   private readonly logger: LoggerLike;
   private readonly registry: PipelineDeps["registry"];
   private readonly cinemeta: PipelineDeps["cinemeta"];
+  private readonly disabledProviders: Set<string>;
 
   private readonly searchCache = new TtlCache<string, Post[]>(SEARCH_CACHE_TTL_MS);
   private readonly mappingCache = new TtlCache<string, Candidate>(MAPPING_CACHE_TTL_MS);
@@ -208,6 +209,9 @@ export class StreamPipeline implements StreamHandlerApi {
     this.logger = deps.logger;
     this.registry = deps.registry;
     this.cinemeta = deps.cinemeta;
+    this.disabledProviders = new Set(
+      deps.config.disabledProviders.map((value) => value.toLowerCase()),
+    );
     this.streamCache = new TtlCache<string, StremioStream[]>(
       deps.config.streamCacheTtlMs,
       500,
@@ -446,7 +450,10 @@ export class StreamPipeline implements StreamHandlerApi {
   }
 
   private async runRequest(ctx: InternalContext, snapshot: ProviderSnapshot): Promise<void> {
-    const bundles = Array.from(snapshot.bundles.values());
+    const bundles = Array.from(snapshot.bundles.values()).filter(
+      (bundle) => !this.disabledProviders.has(bundle.entry.value.toLowerCase()),
+    );
+    if (bundles.length === 0) return;
     await mapLimitSettled(bundles, this.config.searchConcurrency, async (bundle) => {
       if (ctx.stopped) return;
       await this.runProvider(bundle, ctx);

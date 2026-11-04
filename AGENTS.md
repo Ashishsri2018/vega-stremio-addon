@@ -14,7 +14,7 @@ Self-hosted Stremio stream addon (Node >= 22, ESM TypeScript, Express). Provider
 - `npm run update` runs `dist/cli/update.js`; build first.
 - Local run: `DATA_DIR=./data node dist/index.js` — `DATA_DIR` defaults to `/data`.
 
-CI (`.github/workflows/ci.yml`) runs typecheck, tests, build, and a Docker build on PRs and pushes to `main`.
+CI (`.github/workflows/ci.yml`) runs typecheck, tests, build, and a Docker build on PRs and pushes to `main`; pushes to `main` also deploy to Beamup after those jobs pass.
 
 ## Gotchas
 
@@ -29,10 +29,9 @@ CI (`.github/workflows/ci.yml`) runs typecheck, tests, build, and a Docker build
 
 ## Deployment
 
-- The active public deployment is Beamup (`baby-beamup.club`): `https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`. It is a manual, GitHub-keyed deployment; pushes to GitHub `main` run CI only and do not update the active app. `beamup.json` is local deploy state (`projectName`, `lastCommit`) and must stay untracked.
-- Deploy procedure (verified 2026-11-04): `npx beamup-cli config a.baby-beamup.club <github-user>` writes `/root/beamup-config.json`; `npx beamup-cli init <project-name>` writes `beamup.json` (it may warn that the `beamup` remote already exists, which is harmless); then `git push beamup HEAD:master --force`. Set env with `ssh dokku@a.baby-beamup.club config:set <hash>/<project> KEY=...`. Beamup syncs account-level GitHub SSH keys, not repository deploy keys. After the push, Beamup takes about 60 s to swap containers: verify `/configure` contains the expected controls and make one stream request before reporting success.
+- The active public deployment is Beamup (`baby-beamup.club`): `https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`. Pushes to GitHub `main` run CI and then deploy via `.github/workflows/ci.yml` once `verify` and `docker` pass. The deploy job force-pushes to the Beamup remote using `BEAMUP_SSH_PRIVATE_KEY` (and optional `BEAMUP_KNOWN_HOSTS`/`BEAMUP_REMOTE`) repository secrets; never commit the key. `beamup.json` is local deploy state (`projectName`, `lastCommit`) and must stay untracked.
+- Manual deploy fallback (verified 2026-11-04): `npx beamup-cli config a.baby-beamup.club <github-user>` writes `/root/beamup-config.json`; `npx beamup-cli init <project-name>` writes `beamup.json` (it may warn that the `beamup` remote already exists, which is harmless); then `git push beamup HEAD:master --force`. Set env with `ssh dokku@a.baby-beamup.club config:set <hash>/<project> KEY=...`. Beamup syncs account-level GitHub SSH keys, not repository deploy keys. After the push, Beamup takes about 60 s to swap containers: verify `/configure` contains the expected controls and make one stream request before reporting success.
 - Push code to GitHub with `git push origin main`. Use `[skip ci]` in the commit message for docs-only changes; they do not require a Beamup redeploy.
 - Beamup deploys this repo's `Dockerfile`. The project name **must contain `docker`**; otherwise Beamup injects the Herokuish `command: /start web`, causing `exec: "/start": stat /start: no such file or directory` and a 504.
 - Beamup mounts no persistent volume for this app: `/data` is ephemeral, so use `PROVIDER_SETTINGS_JSON`. Swarm limits are 1.2 CPU / 1 GB RAM; 20 addons per GitHub user. Bootstrap can delay listening up to 60 s, and cold proxied requests may 504.
 - Beamup has no published AUP. Bans are manual/report-driven and keyed to the hashed GitHub username (SSH key removed; deploy/config/logs/delete blocked). This addon aggregates third-party streaming links, so hosting it on Stremio's PaaS is a copyright/platform risk. Do not add multi-account or ban-evasion logic.
-- Render (`render.yaml` / `render-free.yaml`) remains an optional/legacy self-hosting path, not the active deployment. Keep `main` green for CI.

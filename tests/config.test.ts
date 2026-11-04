@@ -11,6 +11,7 @@ describe("loadConfig", () => {
     expect(config.providerSha).toBeNull();
     expect(config.updateIntervalMinHours).toBe(4);
     expect(config.updateIntervalMaxHours).toBe(6);
+    expect(config.disabledProviders).toEqual([]);
     expect(config.includeMagnets).toBe(false);
     expect(config.proxyEnabled).toBe(false);
     expect(config.logLevel).toBe("info");
@@ -39,6 +40,20 @@ describe("loadConfig", () => {
     expect(config.includeMagnets).toBe(true);
     expect(config.updateIntervalMinHours).toBe(0.5);
     expect(config.settingsFile).toBe("/srv/vega/provider-settings.json");
+  });
+
+  it("parses DISABLED_PROVIDERS as a trimmed, deduplicated list", () => {
+    expect(
+      loadConfig({ DISABLED_PROVIDERS: " torrentio, internetArchive ,, torrentio " })
+        .disabledProviders,
+    ).toEqual(["torrentio", "internetArchive"]);
+    expect(loadConfig({ DISABLED_PROVIDERS: "   " }).disabledProviders).toEqual([]);
+  });
+
+  it("rejects invalid provider values in DISABLED_PROVIDERS", () => {
+    expect(() => loadConfig({ DISABLED_PROVIDERS: "torrentio,bad/value" })).toThrow(
+      ConfigError,
+    );
   });
 
   it("rejects inverted update intervals", () => {

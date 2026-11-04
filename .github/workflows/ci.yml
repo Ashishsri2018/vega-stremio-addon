@@ -87,7 +87,22 @@ jobs:
         env:
           BEAMUP_REMOTE: ${{ secrets.BEAMUP_REMOTE }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/beamup -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
           remote="${BEAMUP_REMOTE:-dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker}"
-          git push "$remote" HEAD:master --force
+          set +e
+          output=$(git push "$remote" HEAD:master --force 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            # Beamup currently deploys successfully, then rejects the ref because its
+            # beamup-sync-swarm hook cannot parse an empty registry response.
+            if printf '%s' "$output" | grep -q "Deploying web" &&
+               printf '%s' "$output" | grep -q "beamup-sync-swarm" &&
+               printf '%s' "$output" | grep -q "Unexpected end of JSON input"; then
+              echo "::warning::Beamup deployed the app but its sync hook failed; treating the deployment as successful"
+            else
+              exit "$status"
+            fi
+          fi

@@ -22,7 +22,7 @@
     "cheerio": "^1.0.0",
     "compression": "^1.8.2",
     "express": "^4.21.2",
-    "undici": "^7.30.2",
+    "undici": "^8.12.3",
     "zod": "^3.24.1"
   },
   "optionalDependencies": {

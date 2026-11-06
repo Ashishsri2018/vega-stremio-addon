@@ -253,7 +253,7 @@ All settings are environment variables. Invalid values fail fast at startup.
 
 The active Beamup deployment overrides some defaults in `deploy/beamup.env` (`SEARCH_CONCURRENCY=40`,
 `SEARCH_TIMEOUT_MS=5000`, `META_TIMEOUT_MS=8000`, `STREAM_TIMEOUT_MS=8000`,
-`GLOBAL_DEADLINE_MS=10000`, `SETTLE_MS=4000`, `EMPTY_FENCE_MS=0`). Beamup's proxy starts returning
+`GLOBAL_DEADLINE_MS=10000`, `STREAM_CACHE_TTL_MS=180000`, `SETTLE_MS=4000`, `EMPTY_FENCE_MS=0`). Beamup's proxy starts returning
 504 when upstream work runs near 17-19 s, so keep `GLOBAL_DEADLINE_MS` at 10 s or less there;
 per-provider timeouts above the global deadline are clamped to the remaining budget.
 

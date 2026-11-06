@@ -165,3 +165,12 @@ Verification:
 Size coverage is sparse: GoT had sizes on 9/26 streams; Stranger Things had 0/47. The filter only
 removes streams when a size is parseable, so most providers' unknown-size streams remain unless the
 toggle is cleared.
+
+## 2026-11-06 - Stream cache TTL set to 3 minutes on Beamup
+
+- `deploy/beamup.env` now sets `STREAM_CACHE_TTL_MS=180000` (was unset, so the `60000` default
+  applied). The stream cache is keyed by `type:imdbId:season:episode` and shared across per-user
+  config segments, so repeat requests within 3 minutes reuse provider results.
+- The value is baked into the image and sourced by `docker-entrypoint.sh` at container start;
+  it takes effect on the next Beamup deploy.
+- Source default in `src/config.ts` is unchanged (`60000`); only the Beamup deployment overrides it.

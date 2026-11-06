@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigError, loadConfig } from "../src/config.js";
+import { ConfigError, configWarnings, loadConfig } from "../src/config.js";
 
 describe("loadConfig", () => {
   it("applies defaults", () => {
@@ -21,6 +21,12 @@ describe("loadConfig", () => {
     expect(config.searchConcurrency).toBe(16);
     expect(config.settleMs).toBe(8000);
     expect(config.emptyFenceMs).toBe(0);
+    expect(config.streamRateLimitPerMin).toBe(120);
+    expect(config.streamGlobalRateLimitPerMin).toBe(600);
+    expect(config.streamMaxConcurrent).toBe(64);
+    expect(config.proxyRateLimitPerMin).toBe(240);
+    expect(config.proxyGlobalRateLimitPerMin).toBe(1200);
+    expect(config.proxyMaxConcurrent).toBe(64);
   });
 
   it("reads PROVIDER_SETTINGS_JSON and treats blank values as unset", () => {
@@ -83,5 +89,42 @@ describe("loadConfig", () => {
 
   it("rejects unknown log levels", () => {
     expect(() => loadConfig({ LOG_LEVEL: "verbose" })).toThrow(ConfigError);
+  });
+
+  it("rejects settle and empty-fence values beyond the global deadline", () => {
+    expect(() =>
+      loadConfig({ SETTLE_MS: "20000", GLOBAL_DEADLINE_MS: "10000" }),
+    ).toThrow(/SETTLE_MS/);
+    expect(() =>
+      loadConfig({ EMPTY_FENCE_MS: "20000", GLOBAL_DEADLINE_MS: "10000" }),
+    ).toThrow(/EMPTY_FENCE_MS/);
+    expect(loadConfig({ SETTLE_MS: "10000", GLOBAL_DEADLINE_MS: "10000" }).settleMs).toBe(
+      10000,
+    );
+  });
+
+  it("validates PROVIDER_SETTINGS_JSON shape at startup", () => {
+    expect(() => loadConfig({ PROVIDER_SETTINGS_JSON: "not json" })).toThrow(
+      /PROVIDER_SETTINGS_JSON/,
+    );
+    expect(() => loadConfig({ PROVIDER_SETTINGS_JSON: "[]" })).toThrow(
+      /must contain an object/,
+    );
+    expect(() =>
+      loadConfig({ PROVIDER_SETTINGS_JSON: '{"skipTimings":"yes"}' }),
+    ).toThrow(/skipTimings must be a boolean/);
+    expect(() =>
+      loadConfig({ PROVIDER_SETTINGS_JSON: '{"kv":[]}' }),
+    ).toThrow(/kv must be an object/);
+
+    const valid = '{"skipTimings":true,"kv":{"debrid_api_key":"x"}}';
+    expect(loadConfig({ PROVIDER_SETTINGS_JSON: valid }).providerSettingsJson).toBe(valid);
+  });
+
+  it("warns when the global deadline exceeds the Beamup proxy cutoff", () => {
+    const warnings = configWarnings(loadConfig({}));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("Beamup");
+    expect(configWarnings(loadConfig({ GLOBAL_DEADLINE_MS: "8000" }))).toEqual([]);
   });
 });

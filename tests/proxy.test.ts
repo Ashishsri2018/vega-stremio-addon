@@ -12,6 +12,7 @@ import {
 } from "../src/proxy/sign.js";
 import {
   assertUrlAllowed,
+  createPinnedLookup,
   createProxyHandler,
   isPrivateAddress,
   rewriteHlsPlaylist,
@@ -190,7 +191,7 @@ describe("assertUrlAllowed", () => {
   it("accepts public DNS results", async () => {
     await expect(
       assertUrlAllowed("https://example.com/file.mp4", false, async () => ["93.184.216.34"]),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual(["93.184.216.34"]);
   });
 
   it("rejects localhost and private DNS results", async () => {
@@ -228,10 +229,10 @@ describe("assertUrlAllowed", () => {
   });
 
   it("allows private hosts only when explicitly enabled", async () => {
-    await expect(assertUrlAllowed("http://127.0.0.1:1234/file", true)).resolves.toBeUndefined();
+    await expect(assertUrlAllowed("http://127.0.0.1:1234/file", true)).resolves.toEqual([]);
     await expect(
       assertUrlAllowed("http://localhost:1234/file", true, async () => ["127.0.0.1"]),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual([]);
   });
 
   it("fails closed when DNS fails or returns nothing", async () => {
@@ -295,6 +296,79 @@ describe("rewriteHlsPlaylist", () => {
     expect(seen).toHaveLength(8);
   });
 
+  it("rewrites low-latency HLS tags", () => {
+    const playlist = [
+      "#EXTM3U",
+      '#EXT-X-SESSION-DATA:DATA-ID="com.example.title",URI="session.json"',
+      '#EXT-X-DATERANGE:ID="ad",START-DATE="2024-01-01T00:00:00Z",X-ASSET-URI="ad.mp4"',
+      '#EXT-X-PART:DURATION=0.5,URI="part1.mp4"',
+      '#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part2.mp4"',
+      '#EXT-X-RENDITION-REPORT:URI="../1080p/index.m3u8"',
+    ].join("\n");
+    const rewritten = rewriteHlsPlaylist(
+      playlist,
+      "https://cdn.example.com/hls/master.m3u8",
+      (url) => `proxy:${url}`,
+    );
+
+    expect(rewritten).toContain('URI="proxy:https://cdn.example.com/hls/session.json"');
+    expect(rewritten).toContain(
+      'X-ASSET-URI="proxy:https://cdn.example.com/hls/ad.mp4"',
+    );
+    expect(rewritten).toContain('URI="proxy:https://cdn.example.com/hls/part1.mp4"');
+    expect(rewritten).toContain('URI="proxy:https://cdn.example.com/hls/part2.mp4"');
+    expect(rewritten).toContain(
+      'URI="proxy:https://cdn.example.com/1080p/index.m3u8"',
+    );
+  });
+});
+
+describe("createPinnedLookup", () => {
+  const pinned = new Map<string, readonly string[]>([
+    ["example.com", ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]],
+  ]);
+
+  function resolve(
+    lookup: ReturnType<typeof createPinnedLookup>,
+    hostname: string,
+    options: { family?: number; all?: boolean },
+  ): Promise<unknown> {
+    return new Promise((resolvePromise, reject) => {
+      lookup(hostname, options, (error, address, family) => {
+        if (error) reject(error);
+        else resolvePromise({ address, family });
+      });
+    });
+  }
+
+  it("serves only pre-validated addresses", async () => {
+    const lookup = createPinnedLookup(pinned);
+    await expect(resolve(lookup, "example.com", { family: 4 })).resolves.toEqual({
+      address: "93.184.216.34",
+      family: 4,
+    });
+    await expect(resolve(lookup, "example.com", { family: 6 })).resolves.toEqual({
+      address: "2606:2800:220:1:248:1893:25c8:1946",
+      family: 6,
+    });
+    await expect(resolve(lookup, "example.com", { all: true })).resolves.toEqual({
+      address: [
+        { address: "93.184.216.34", family: 4 },
+        { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+      ],
+      family: 0,
+    });
+  });
+
+  it("fails closed for hosts that were not validated", async () => {
+    const lookup = createPinnedLookup(pinned);
+    await expect(
+      resolve(lookup, "attacker.example", { family: 4 }),
+    ).rejects.toMatchObject({ code: "ENOTFOUND" });
+  });
+});
+
+describe("rewriteHlsPlaylist edge cases", () => {
   it("leaves non-http URIs and unparseable lines untouched", () => {
     const playlist = [
       "#EXTM3U",

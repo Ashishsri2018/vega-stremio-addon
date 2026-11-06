@@ -41,9 +41,39 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: vega-stremio-addon:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Smoke test container startup
+        run: |
+          set -euo pipefail
+          docker run -d --name addon-smoke \
+            -e VEGA_ENV_FILE=/dev/null \
+            -e UPDATE_ON_START=false \
+            -e LOG_LEVEL=debug \
+            -p 7000:7000 \
+            vega-stremio-addon:ci
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:7000/health | grep -q '"status"'; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            echo "::error::addon did not answer /health within 45s"
+            docker logs addon-smoke
+            exit 1
+          fi
+          curl -fsS http://127.0.0.1:7000/manifest.json | grep -q '"id"'
+          echo "container answered /health and /manifest.json"
+      - name: Container logs
+        if: always()
+        run: |
+          docker logs addon-smoke || true
+          docker rm -f addon-smoke || true
 
   deploy-beamup:
     name: Deploy to Beamup

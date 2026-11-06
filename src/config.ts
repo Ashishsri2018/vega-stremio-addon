@@ -1,5 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
+import { parseSettingsJson } from "./providers/settings.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -34,6 +35,12 @@ export interface AppConfig {
   kvFlushMs: number;
   providerCacheTtlMs: number;
   streamCacheTtlMs: number;
+  streamRateLimitPerMin: number;
+  streamGlobalRateLimitPerMin: number;
+  streamMaxConcurrent: number;
+  proxyRateLimitPerMin: number;
+  proxyGlobalRateLimitPerMin: number;
+  proxyMaxConcurrent: number;
 }
 
 const envBool = (def: boolean) =>
@@ -130,6 +137,12 @@ const schema = z.object({
   KV_FLUSH_MS: envInt(500, 0, 60000),
   PROVIDER_CACHE_TTL_MS: envInt(21600000, 1000, 604800000),
   STREAM_CACHE_TTL_MS: envInt(60000, 0, 3600000),
+  STREAM_RATE_LIMIT_PER_MIN: envInt(120, 0, 100000),
+  STREAM_GLOBAL_RATE_LIMIT_PER_MIN: envInt(600, 0, 100000),
+  STREAM_MAX_CONCURRENT: envInt(64, 0, 10000),
+  PROXY_RATE_LIMIT_PER_MIN: envInt(240, 0, 100000),
+  PROXY_GLOBAL_RATE_LIMIT_PER_MIN: envInt(1200, 0, 100000),
+  PROXY_MAX_CONCURRENT: envInt(64, 0, 10000),
 });
 
 export class ConfigError extends Error {
@@ -166,6 +179,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       throw new ConfigError("PUBLIC_BASE_URL must use http or https");
     }
   }
+  if (value.SETTLE_MS > value.GLOBAL_DEADLINE_MS) {
+    throw new ConfigError("SETTLE_MS must be <= GLOBAL_DEADLINE_MS");
+  }
+  if (value.EMPTY_FENCE_MS > value.GLOBAL_DEADLINE_MS) {
+    throw new ConfigError("EMPTY_FENCE_MS must be <= GLOBAL_DEADLINE_MS");
+  }
+  if (value.PROVIDER_SETTINGS_JSON) {
+    try {
+      parseSettingsJson(value.PROVIDER_SETTINGS_JSON, "PROVIDER_SETTINGS_JSON");
+    } catch (error) {
+      throw new ConfigError(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   return {
     port: value.PORT,
@@ -200,5 +226,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     kvFlushMs: value.KV_FLUSH_MS,
     providerCacheTtlMs: value.PROVIDER_CACHE_TTL_MS,
     streamCacheTtlMs: value.STREAM_CACHE_TTL_MS,
+    streamRateLimitPerMin: value.STREAM_RATE_LIMIT_PER_MIN,
+    streamGlobalRateLimitPerMin: value.STREAM_GLOBAL_RATE_LIMIT_PER_MIN,
+    streamMaxConcurrent: value.STREAM_MAX_CONCURRENT,
+    proxyRateLimitPerMin: value.PROXY_RATE_LIMIT_PER_MIN,
+    proxyGlobalRateLimitPerMin: value.PROXY_GLOBAL_RATE_LIMIT_PER_MIN,
+    proxyMaxConcurrent: value.PROXY_MAX_CONCURRENT,
   };
+}
+
+export function configWarnings(config: AppConfig): string[] {
+  const warnings: string[] = [];
+  if (config.globalDeadlineMs > 10_000) {
+    warnings.push(
+      `GLOBAL_DEADLINE_MS=${config.globalDeadlineMs} exceeds the ~10s Beamup proxy deadline; requests may be cut off with a 504`,
+    );
+  }
+  return warnings;
 }

@@ -235,8 +235,14 @@ describe("Updater", () => {
     expect(state.providers.beta.status).toBe("pending");
     expect(state.providers.beta.sha).toBe(SHA_A);
     expect(state.providers.beta.error).toMatch(/@vega-version/);
+    expect(state.lastError).toMatch(/failed to install/);
     expect(h.updater.getHealth().status).toBe("degraded");
     expect(h.updater.getHealth().pending).toEqual(["beta"]);
+
+    const failedRetry = await h.updater.runOnce("retry-still-failing");
+    expect(failedRetry.pending).toEqual(["beta"]);
+    expect(h.updater.getState().lastError).toMatch(/provider update\(s\) failed/);
+    expect(h.updater.getHealth().lastError).toMatch(/provider update\(s\) failed/);
 
     fixture.setFile(
       SHA_B,

@@ -4,30 +4,50 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import type { Request, RequestHandler, Response as ExpressResponse } from "express";
+import { Agent, fetch as undiciFetch, type Dispatcher, type RequestInit as UndiciRequestInit } from "undici";
 import type { LoggerLike } from "../types.js";
-import { nativeFetch } from "../util/nativeFetch.js";
 import {
   signProxyToken,
   verifyProxyToken,
   type ProxyPayload,
 } from "./sign.js";
 
+type ProxyFetchInit = UndiciRequestInit;
+type ProxyFetch = (url: string, init: ProxyFetchInit) => Promise<Response>;
+
 export interface ProxyHandlerOptions {
   secret: string;
   logger: LoggerLike;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: ProxyFetch;
   allowPrivateHosts?: boolean;
   maxRedirects?: number;
   maxPlaylistBytes?: number;
+  pinDns?: boolean;
 }
 
-type FetchResponse = Awaited<ReturnType<typeof fetch>>;
+type FetchResponse = Response;
+
+const defaultProxyFetch: ProxyFetch = (url, init) =>
+  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
+
+type AgentOptions = NonNullable<ConstructorParameters<typeof Agent>[0]>;
+type PinnedLookup = (
+  hostname: string,
+  options: { family?: number; all?: boolean; hints?: number },
+  callback: (
+    error: NodeJS.ErrnoException | null,
+    address: string | Array<{ address: string; family: number }>,
+    family?: number,
+  ) => void,
+) => void;
+type LookupFn = PinnedLookup;
 
 const DEFAULT_MAX_REDIRECTS = 5;
 const DEFAULT_MAX_PLAYLIST_BYTES = 5 * 1024 * 1024;
 const HLS_CONTENT_TYPE = "application/vnd.apple.mpegurl";
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
-const URI_TAG = /^#EXT-X-(?:SESSION-KEY|KEY|MAP|MEDIA|I-FRAME-STREAM-INF):/;
+const URI_TAG =
+  /^#EXT-X-(?:SESSION-KEY|SESSION-DATA|KEY|MAP|MEDIA|I-FRAME-STREAM-INF|PART|PRELOAD-HINT|RENDITION-REPORT|DATERANGE):/;
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -152,11 +172,15 @@ async function defaultResolveHost(hostname: string): Promise<string[]> {
   return results.map((entry) => entry.address);
 }
 
+/**
+ * Resolves and validates a target URL. Returns the validated addresses so the
+ * caller can pin the subsequent connection to them instead of resolving again.
+ */
 export async function assertUrlAllowed(
   targetUrl: string,
   allowPrivateHosts = false,
   resolveHost: (hostname: string) => Promise<string[]> = defaultResolveHost,
-): Promise<void> {
+): Promise<string[]> {
   let url: URL;
   try {
     url = new URL(targetUrl);
@@ -167,7 +191,7 @@ export async function assertUrlAllowed(
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new ProxyError("unsupported target protocol");
   }
-  if (allowPrivateHosts) return;
+  if (allowPrivateHosts) return [];
 
   let hostname = url.hostname;
   if (hostname.startsWith("[") && hostname.endsWith("]")) {
@@ -177,7 +201,7 @@ export async function assertUrlAllowed(
 
   if (isIP(hostname) !== 0) {
     if (isPrivateAddress(hostname)) throw new ProxyError("target address is not allowed");
-    return;
+    return [hostname];
   }
 
   let addresses: string[];
@@ -192,6 +216,42 @@ export async function assertUrlAllowed(
   for (const address of addresses) {
     if (isPrivateAddress(address)) throw new ProxyError("target address is not allowed");
   }
+  return addresses;
+}
+
+export function createPinnedLookup(
+  pinned: ReadonlyMap<string, readonly string[]>,
+): LookupFn {
+  return (hostname, options, callback) => {
+    const addresses = pinned.get(String(hostname).toLowerCase());
+    if (!addresses || addresses.length === 0) {
+      const error = new Error(
+        `DNS pinning has no validated address for ${hostname}`,
+      ) as NodeJS.ErrnoException;
+      error.code = "ENOTFOUND";
+      callback(error, "", 4);
+      return;
+    }
+
+    const familyOf = (address: string): 4 | 6 => (isIP(address) === 6 ? 6 : 4);
+    const family = options.family === 4 || options.family === 6 ? options.family : 0;
+    const matching =
+      family === 0
+        ? Array.from(addresses)
+        : addresses.filter((address) => familyOf(address) === family);
+    const usable = matching.length > 0 ? matching : Array.from(addresses);
+
+    if (options.all) {
+      callback(
+        null,
+        usable.map((address) => ({ address, family: familyOf(address) })),
+        0,
+      );
+      return;
+    }
+    const first = usable[0] as string;
+    callback(null, first, familyOf(first));
+  };
 }
 
 function isHttpUrl(value: string): boolean {
@@ -347,20 +407,34 @@ async function fetchFollowingRedirects(
   req: Request,
   payload: ProxyPayload,
   options: Required<Pick<ProxyHandlerOptions, "allowPrivateHosts" | "maxRedirects">> & {
-    fetchImpl: typeof fetch;
+    fetchImpl: ProxyFetch;
     signal: AbortSignal;
+    pinned?: Map<string, string[]>;
+    dispatcher?: Dispatcher;
   },
 ): Promise<{ response: FetchResponse; finalUrl: string }> {
   const headers = buildUpstreamHeaders(payload, req);
   let currentUrl = targetUrl;
 
   for (let redirects = 0; ; redirects += 1) {
-    await assertUrlAllowed(currentUrl, options.allowPrivateHosts);
+    const addresses = await assertUrlAllowed(
+      currentUrl,
+      options.allowPrivateHosts,
+    );
+    if (options.dispatcher && options.pinned) {
+      let hostname = new URL(currentUrl).hostname;
+      if (hostname.startsWith("[") && hostname.endsWith("]")) {
+        hostname = hostname.slice(1, -1);
+      }
+      options.pinned.set(hostname.toLowerCase(), addresses);
+    }
+
     const response = await options.fetchImpl(currentUrl, {
       method: req.method,
       headers,
       redirect: "manual",
       signal: options.signal,
+      ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
     });
 
     const location = response.headers.get("location");
@@ -420,10 +494,11 @@ async function handleProxyRequest(
   options: {
     secret: string;
     logger: LoggerLike;
-    fetchImpl: typeof fetch;
+    fetchImpl: ProxyFetch;
     allowPrivateHosts: boolean;
     maxRedirects: number;
     maxPlaylistBytes: number;
+    pinDns: boolean;
   },
 ): Promise<void> {
   const startedAt = Date.now();
@@ -451,6 +526,13 @@ async function handleProxyRequest(
   req.once("aborted", abort);
 
   let loggedUrl = payload.u;
+  const pinned = new Map<string, string[]>();
+  const dispatcher =
+    options.pinDns && !options.allowPrivateHosts
+      ? new Agent({
+          connect: { lookup: createPinnedLookup(pinned) },
+        } as unknown as AgentOptions)
+      : undefined;
 
   try {
     const { response, finalUrl } = await fetchFollowingRedirects(
@@ -462,6 +544,8 @@ async function handleProxyRequest(
         maxRedirects: options.maxRedirects,
         fetchImpl: options.fetchImpl,
         signal: controller.signal,
+        pinned,
+        dispatcher,
       },
     );
     loggedUrl = finalUrl;
@@ -530,6 +614,7 @@ async function handleProxyRequest(
   } finally {
     res.off("close", onClose);
     req.off("aborted", abort);
+    if (dispatcher) void dispatcher.destroy();
   }
 }
 
@@ -537,7 +622,7 @@ export function createProxyHandler(options: ProxyHandlerOptions): RequestHandler
   const settings = {
     secret: options.secret,
     logger: options.logger,
-    fetchImpl: options.fetchImpl ?? nativeFetch,
+    fetchImpl: options.fetchImpl ?? defaultProxyFetch,
     allowPrivateHosts: options.allowPrivateHosts === true,
     maxRedirects:
       options.maxRedirects !== undefined
@@ -547,6 +632,7 @@ export function createProxyHandler(options: ProxyHandlerOptions): RequestHandler
       options.maxPlaylistBytes !== undefined
         ? Math.max(0, Math.floor(options.maxPlaylistBytes))
         : DEFAULT_MAX_PLAYLIST_BYTES,
+    pinDns: options.pinDns ?? options.fetchImpl === undefined,
   };
 
   return (req, res): void => {

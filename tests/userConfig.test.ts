@@ -32,6 +32,8 @@ describe("encodeUserConfig", () => {
       maxSizeMB: 4096,
       includeUnknownSize: false,
       subtitleLangs: ["en", "pt-br"],
+      providers: [],
+      disabledProviders: [],
     };
     expect(parseUserConfig(encodeUserConfig(config))).toEqual(config);
 
@@ -42,6 +44,8 @@ describe("encodeUserConfig", () => {
       maxSizeMB: null,
       includeUnknownSize: true,
       subtitleLangs: [],
+      providers: [],
+      disabledProviders: [],
     };
     expect(parseUserConfig(encodeUserConfig(onlyMax))).toEqual(onlyMax);
 
@@ -52,8 +56,23 @@ describe("encodeUserConfig", () => {
       maxSizeMB: null,
       includeUnknownSize: false,
       subtitleLangs: [],
+      providers: [],
+      disabledProviders: [],
     };
     expect(parseUserConfig(encodeUserConfig(noUnknown))).toEqual(noUnknown);
+  });
+
+  it("round-trips provider include and exclude filters", () => {
+    const config = {
+      ...DEFAULT_USER_CONFIG,
+      providers: ["NetMirror", "showbox"],
+      disabledProviders: ["vidsrc"],
+    };
+    expect(parseUserConfig(encodeUserConfig(config))).toEqual({
+      ...config,
+      providers: ["netmirror", "showbox"],
+      disabledProviders: ["vidsrc"],
+    });
   });
 });
 
@@ -81,6 +100,10 @@ describe("parseUserConfig", () => {
       { v: 1, includeUnknownSize: "no" },
       { v: 1, subtitleLangs: "en" },
       { v: 1, subtitleLangs: ["not a language"] },
+      { v: 1, providers: "netmirror" },
+      { v: 1, providers: ["bad provider"] },
+      { v: 1, disabledProviders: ["bad/value"] },
+      { v: 1, providers: Array.from({ length: 51 }, (_, index) => `p${index}`) },
       "not an object",
     ];
     for (const value of invalid) {
@@ -96,6 +119,8 @@ describe("parseUserConfig", () => {
       maxSizeMB: null,
       includeUnknownSize: true,
       subtitleLangs: [],
+      providers: [],
+      disabledProviders: [],
     });
     expect(parseUserConfig(segmentOf({} as Record<string, unknown>))).toEqual(
       DEFAULT_USER_CONFIG,

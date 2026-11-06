@@ -132,6 +132,20 @@ describe("SettingsManager", () => {
     expect(manager.get().kv.alpha_quality).toBe("manual");
   });
 
+  it("lists explicitly configured keys without exposing values", async () => {
+    await writeSettings({ kv: { zeta_key: "z", alpha_key: "a" } });
+    await manager.load();
+
+    const bundles: ProviderBundle[] = [
+      fakeBundle("alpha", "1.0.0", () => [
+        { key: "schema_only", defaultValue: "default" },
+      ]),
+    ];
+    await manager.applySchemaDefaults(bundles, createFakeProviderContext(kv));
+
+    expect(manager.listConfiguredKeys()).toEqual(["alpha_key", "zeta_key"]);
+  });
+
   it("keeps the last good configuration when the file is malformed", async () => {
     await writeSettings({ skipTimings: false, kv: { good_key: "good" } });
     await manager.load();

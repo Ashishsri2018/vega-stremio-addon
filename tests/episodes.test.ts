@@ -117,4 +117,20 @@ describe("matchesEpisode", () => {
   it("treats a season pack title as not matching a specific episode", () => {
     expect(matchesEpisode("Show Season 1 Complete", 1, 1)).toBe(false);
   });
+
+  it("matches absolute episode numbers for anime-style links", () => {
+    expect(matchesEpisode("Show Episode 37", 4, 1, null, 37)).toBe(true);
+    expect(matchesEpisode("Episode 37", 4, 1, null, 37)).toBe(true);
+    expect(matchesEpisode("Ep. 37", 4, 1, null, 37)).toBe(true);
+    expect(matchesEpisode("Episode 36", 4, 1, null, 37)).toBe(false);
+    expect(matchesEpisode("Episode 37", 4, 1, null, null)).toBe(false);
+    expect(matchesEpisode("Episode 37", 4, 37, null, 37)).toBe(true);
+  });
+
+  it("matches special, OVA and season zero links explicitly", () => {
+    expect(matchesEpisode("Show OVA 1", 0, 1)).toBe(true);
+    expect(matchesEpisode("Show Special 2", 0, 2)).toBe(true);
+    expect(matchesEpisode("Specials", 0, 3)).toBe(true);
+    expect(matchesEpisode("Show OVA 1", 0, 2)).toBe(false);
+  });
 });

@@ -1,5 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { gunzipSync } from "node:zlib";
 import type express from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/addon/routes.js";
@@ -29,6 +30,26 @@ async function listen(server: http.Server): Promise<string> {
 
 async function startApp(app: express.Express): Promise<string> {
   return listen(http.createServer(app as unknown as http.RequestListener));
+}
+
+function rawGet(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, { headers }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () =>
+        resolve({
+          status: response.statusCode ?? 0,
+          headers: response.headers,
+          body: Buffer.concat(chunks),
+        }),
+      );
+    });
+    request.on("error", reject);
+  });
 }
 
 afterEach(async () => {
@@ -548,6 +569,200 @@ describe("stream routes", () => {
     const response = await nativeFetch(`${base}/stream/movie/tt0111161.json`);
     const body = (await response.json()) as { streams: StremioStream[] };
     expect(body.streams[0]?.url.startsWith("https://addon.example.com/base/proxy/")).toBe(true);
+  });
+});
+
+describe("request ids and compression", () => {
+  it("echoes a safe request id and generates one otherwise", async () => {
+    const base = await startApp(createApp(makeDeps()));
+
+    const echoed = await nativeFetch(`${base}/manifest.json`, {
+      headers: { "X-Request-Id": "client-request-123" },
+    });
+    expect(echoed.headers.get("x-request-id")).toBe("client-request-123");
+
+    const generated = await nativeFetch(`${base}/manifest.json`);
+    expect(generated.headers.get("x-request-id")).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const rejected = await nativeFetch(`${base}/manifest.json`, {
+      headers: { "X-Request-Id": "bad id!" },
+    });
+    expect(rejected.headers.get("x-request-id")).not.toBe("bad id!");
+  });
+
+  it("gzip-compresses large stream responses and leaves small bodies alone", async () => {
+    const streams: StremioStream[] = Array.from({ length: 40 }, (_, index) => ({
+      name: "P",
+      title: `1080p ${"x".repeat(120)}`,
+      url: `https://cdn.example.com/${index}.mp4`,
+    }));
+    const pipeline: StreamHandlerApi = { handle: vi.fn(async () => streams) };
+    const config = makeConfig({
+      streamRateLimitPerMin: 0,
+      streamGlobalRateLimitPerMin: 0,
+      streamMaxConcurrent: 0,
+    });
+    const base = await startApp(createApp(makeDeps({ pipeline, config })));
+
+    const compressed = await rawGet(`${base}/stream/movie/tt0111161.json`, {
+      "Accept-Encoding": "gzip",
+    });
+    expect(compressed.headers["content-encoding"]).toBe("gzip");
+    const body = JSON.parse(gunzipSync(compressed.body).toString("utf8")) as {
+      streams: StremioStream[];
+    };
+    expect(body.streams).toHaveLength(40);
+
+    const small = await rawGet(`${base}/manifest.json`, {
+      "Accept-Encoding": "gzip",
+    });
+    expect(small.headers["content-encoding"]).toBeUndefined();
+  });
+});
+
+describe("provider filters and health metrics", () => {
+  it("passes per-user provider include and exclude filters to the pipeline", async () => {
+    const handle = vi.fn(async () => []);
+    const base = await startApp(
+      createApp(makeDeps({ pipeline: { handle } as StreamHandlerApi })),
+    );
+    const segment = encodeUserConfig({
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: [],
+      providers: ["Alpha"],
+      disabledProviders: ["beta"],
+    });
+
+    await nativeFetch(`${base}/${segment}/stream/movie/tt0111161.json`);
+    expect(handle).toHaveBeenCalledWith(
+      {
+        type: "movie",
+        imdbId: "tt0111161",
+        providers: ["alpha"],
+        disabledProviders: ["beta"],
+      },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("merges pipeline metrics into the health report", async () => {
+    const metrics = {
+      requests: 3,
+      cacheHits: 1,
+      cacheMisses: 2,
+      emptyResults: 0,
+      deadlineHits: 0,
+      settleHits: 1,
+      providerFailures: 1,
+      cacheEntries: { search: 1, mapping: 1, stream: 1 },
+      breakers: { alpha: "open" as const },
+    };
+    const pipeline: StreamHandlerApi = {
+      handle: vi.fn(async () => []),
+      getMetrics: () => metrics,
+    };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+    const response = await nativeFetch(`${base}/health`);
+
+    expect(await response.json()).toEqual({ ...healthFixture, pipeline: metrics });
+  });
+
+  it("lists configured provider settings keys without values", async () => {
+    const base = await startApp(
+      createApp(
+        makeDeps({
+          settingsKeys: () => ["debrid_api_key", "<script>alert(1)</script>"],
+        }),
+      ),
+    );
+    const response = await nativeFetch(`${base}/configure`);
+    const html = await response.text();
+
+    expect(html).toContain("debrid_api_key");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("alert(1)</script>");
+  });
+});
+
+describe("rate limiting", () => {
+  it("returns an empty stream list when the per-IP bucket is empty", async () => {
+    const handle = vi.fn(async () => []);
+    const config = makeConfig({
+      streamRateLimitPerMin: 1,
+      streamGlobalRateLimitPerMin: 1,
+      streamMaxConcurrent: 0,
+    });
+    const base = await startApp(
+      createApp(makeDeps({ pipeline: { handle } as StreamHandlerApi, config })),
+    );
+
+    const first = await nativeFetch(`${base}/stream/movie/tt0111161.json`);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ streams: [] });
+
+    const second = await nativeFetch(`${base}/stream/movie/tt0111161.json`);
+    expect(second.status).toBe(200);
+    expect(second.headers.get("retry-after")).toBe("30");
+    expect(await second.json()).toEqual({ streams: [] });
+    expect(handle).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps concurrent stream work globally", async () => {
+    let releaseWork: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseWork = resolve;
+    });
+    let notifyStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      notifyStarted = resolve;
+    });
+    const handle = vi.fn(async () => {
+      notifyStarted?.();
+      await gate;
+      return [];
+    });
+    const config = makeConfig({
+      streamRateLimitPerMin: 0,
+      streamGlobalRateLimitPerMin: 0,
+      streamMaxConcurrent: 1,
+    });
+    const base = await startApp(
+      createApp(makeDeps({ pipeline: { handle } as StreamHandlerApi, config })),
+    );
+
+    const first = nativeFetch(`${base}/stream/movie/tt0111161.json`);
+    await started;
+    const second = await nativeFetch(`${base}/stream/movie/tt0111161.json`);
+    expect(second.headers.get("retry-after")).toBe("30");
+    expect(await second.json()).toEqual({ streams: [] });
+    expect(handle).toHaveBeenCalledTimes(1);
+
+    releaseWork?.();
+    expect(await (await first).json()).toEqual({ streams: [] });
+  });
+
+  it("applies a tighter bucket to the media proxy", async () => {
+    const config = makeConfig({
+      proxyEnabled: true,
+      proxySecret: "proxy-secret",
+      proxyRateLimitPerMin: 1,
+      proxyGlobalRateLimitPerMin: 1,
+      proxyMaxConcurrent: 0,
+    });
+    const base = await startApp(createApp(makeDeps({ config })));
+
+    const first = await nativeFetch(`${base}/proxy/not-a-token`);
+    expect(first.status).toBe(403);
+
+    const second = await nativeFetch(`${base}/proxy/not-a-token`);
+    expect(second.status).toBe(429);
+    expect(second.headers.get("retry-after")).toBe("30");
   });
 });
 

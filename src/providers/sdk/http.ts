@@ -94,6 +94,11 @@ function makeAbortError(reason: unknown): Error {
   return error;
 }
 
+function isAbortLike(error: unknown): boolean {
+  const candidate = error as { name?: string; code?: string } | null;
+  return candidate?.name === "AbortError" || candidate?.code === "ABORT_ERR";
+}
+
 function appendHeader(
   gathered: Map<string, string[]>,
   name: string,
@@ -351,6 +356,11 @@ export class HttpTransport implements HttpTransportApi {
       try {
         return await this.curlRequest(prepared, timeoutMs);
       } catch (error) {
+        if (isAbortLike(error) || prepared.signal?.aborted) {
+          throw prepared.signal?.aborted
+            ? makeAbortError(prepared.signal.reason)
+            : error;
+        }
         this.disableCurl(error);
       }
     }
@@ -415,10 +425,31 @@ export class HttpTransport implements HttpTransportApi {
     }
   }
 
+  private raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return promise;
+    if (signal.aborted) return Promise.reject(makeAbortError(signal.reason));
+
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = (): void => reject(makeAbortError(signal.reason));
+      signal.addEventListener("abort", onAbort, { once: true });
+      promise.then(
+        (value) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      );
+    });
+  }
+
   private async curlRequest(
     options: HttpRequestOptions,
     timeoutMs: number,
   ): Promise<HttpResponseData> {
+    if (options.signal?.aborted) throw makeAbortError(options.signal.reason);
     const api = this.getCurlApi();
     if (!api) throw new Error("curl-cffi-node is unavailable");
     const method = (options.method ?? "GET").toUpperCase();
@@ -426,15 +457,20 @@ export class HttpTransport implements HttpTransportApi {
     if (!helper) throw new Error(`curl-cffi-node has no helper for ${method}`);
 
     const followRedirects = options.redirect !== "manual";
-    const response = await helper(options.url, {
-      headers: options.headers ?? {},
-      data: options.body,
-      impersonate: this.impersonate,
-      verify: false,
-      allowRedirects: followRedirects,
-      followRedirects,
-      timeout: timeoutMs / 1000,
-    });
+    const response = await this.raceAbort(
+      helper(options.url, {
+        headers: options.headers ?? {},
+        data: options.body,
+        impersonate: this.impersonate,
+        verify: false,
+        allowRedirects: followRedirects,
+        followRedirects,
+        timeout: timeoutMs / 1000,
+        signal: options.signal,
+      }),
+      options.signal,
+    );
+    if (options.signal?.aborted) throw makeAbortError(options.signal.reason);
 
     if (!response || typeof response.buffer !== "function") {
       throw new Error("curl-cffi-node returned an unexpected response");

@@ -11,6 +11,7 @@ import {
 } from "../src/util/concurrency.js";
 import { TtlCache } from "../src/util/cache.js";
 import { readJsonFile, writeJsonAtomic } from "../src/util/fs.js";
+import { detectCrashLoop } from "../src/util/startupGuard.js";
 
 const tempDirs: string[] = [];
 
@@ -103,5 +104,56 @@ describe("TtlCache", () => {
     cache.set("c", 3);
     expect(cache.get("a")).toBeUndefined();
     expect(cache.get("c")).toBe(3);
+  });
+
+  it("refreshes recency on get so hot keys survive bursts", () => {
+    const cache = new TtlCache<string, number>(1000, 2);
+    cache.set("hot", 1);
+    cache.set("cold", 2);
+    expect(cache.get("hot")).toBe(1);
+    cache.set("new", 3);
+    expect(cache.get("hot")).toBe(1);
+    expect(cache.get("cold")).toBeUndefined();
+  });
+});
+
+describe("startup guard", () => {
+  it("flags repeated rapid restarts", async () => {
+    const dir = await tempDir();
+    const events: string[] = [];
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: (event: string) => {
+        events.push(event);
+      },
+      child: () => logger,
+    };
+
+    await expect(detectCrashLoop(dir, logger)).resolves.toBe(false);
+    await expect(detectCrashLoop(dir, logger)).resolves.toBe(false);
+    await expect(detectCrashLoop(dir, logger)).resolves.toBe(true);
+    expect(events).toContain("startup_crash_loop_detected");
+
+    const history = JSON.parse(
+      await readFile(path.join(dir, "startup-history.json"), "utf8"),
+    ) as number[];
+    expect(history).toHaveLength(3);
+  });
+
+  it("forgets restarts outside the window", async () => {
+    const dir = await tempDir();
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined,
+      child: () => logger,
+    };
+    const stale = Date.now() - 10 * 60 * 1000;
+    await writeJsonAtomic(path.join(dir, "startup-history.json"), [stale, stale + 1]);
+
+    await expect(detectCrashLoop(dir, logger)).resolves.toBe(false);
   });
 });

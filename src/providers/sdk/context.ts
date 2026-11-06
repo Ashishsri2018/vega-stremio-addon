@@ -85,33 +85,67 @@ class TransportResponse {
   readonly statusText: string;
   readonly url: string;
   readonly headers: ResponseHeaders;
-  private readonly body: Buffer;
+  private readonly rawBody: Buffer;
+  private bodyStream: ReadableStream<Uint8Array> | null = null;
+  private used = false;
 
   constructor(init: TransportResponseInit) {
     this.status = init.status;
     this.statusText = init.statusText;
     this.url = init.url;
     this.headers = new ResponseHeaders(init.headers);
-    this.body = init.body;
+    this.rawBody = init.body;
     this.ok = init.status >= 200 && init.status < 300;
   }
 
+  get bodyUsed(): boolean {
+    return this.used;
+  }
+
+  get body(): ReadableStream<Uint8Array> {
+    if (!this.bodyStream) {
+      const bytes = new Uint8Array(this.rawBody.byteLength);
+      bytes.set(this.rawBody);
+      this.bodyStream = new Blob([bytes]).stream() as ReadableStream<Uint8Array>;
+    }
+    return this.bodyStream;
+  }
+
+  clone(): TransportResponse {
+    return new TransportResponse({
+      status: this.status,
+      statusText: this.statusText,
+      url: this.url,
+      headers: Object.fromEntries(this.headers.entries()),
+      body: Buffer.from(this.rawBody),
+    });
+  }
+
   async text(): Promise<string> {
-    return this.body.toString("utf8");
+    this.used = true;
+    return this.rawBody.toString("utf8");
   }
 
   async json<T = unknown>(): Promise<T> {
-    return JSON.parse(await this.text()) as T;
+    this.used = true;
+    return JSON.parse(this.rawBody.toString("utf8")) as T;
   }
 
   async buffer(): Promise<Buffer> {
-    return Buffer.from(this.body);
+    this.used = true;
+    return Buffer.from(this.rawBody);
   }
 
   async arrayBuffer(): Promise<ArrayBuffer> {
-    const copy = new ArrayBuffer(this.body.byteLength);
-    new Uint8Array(copy).set(this.body);
+    this.used = true;
+    const copy = new ArrayBuffer(this.rawBody.byteLength);
+    new Uint8Array(copy).set(this.rawBody);
     return copy;
+  }
+
+  async bytes(): Promise<Uint8Array> {
+    this.used = true;
+    return new Uint8Array(this.rawBody);
   }
 }
 

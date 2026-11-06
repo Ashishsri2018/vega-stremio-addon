@@ -328,6 +328,7 @@ export interface NormalizedProviderSettings {
 
 export interface SettingsManagerApi {
   get(): NormalizedProviderSettings;
+  listConfiguredKeys(): string[];
   load(): Promise<void>;
   reload(): Promise<void>;
   applySchemaDefaults(
@@ -355,6 +356,7 @@ export interface CinemetaMeta {
   id: string;
   type: string;
   name: string;
+  originalName?: string;
   year?: string | number;
   releaseInfo?: string;
   videos?: CinemetaEpisode[];
@@ -367,6 +369,8 @@ export interface StreamRequest {
   imdbId: string;
   season?: number;
   episode?: number;
+  providers?: string[];
+  disabledProviders?: string[];
 }
 
 export interface CinemetaApi {
@@ -381,6 +385,7 @@ export interface StremioSubtitle {
   id: string;
   url: string;
   lang: string;
+  title?: string;
 }
 
 export interface StremioStream {
@@ -394,8 +399,21 @@ export interface StremioStream {
   subtitles?: StremioSubtitle[];
 }
 
+export interface PipelineMetrics {
+  requests: number;
+  cacheHits: number;
+  cacheMisses: number;
+  emptyResults: number;
+  deadlineHits: number;
+  settleHits: number;
+  providerFailures: number;
+  cacheEntries: { search: number; mapping: number; stream: number };
+  breakers: Record<string, "open" | "closed">;
+}
+
 export interface StreamHandlerApi {
   handle(request: StreamRequest, signal?: AbortSignal): Promise<StremioStream[]>;
+  getMetrics?(): PipelineMetrics;
 }
 
 export interface StremioManifest {
@@ -429,6 +447,8 @@ export interface HealthReport {
   nextCheck: string | null;
   pending: string[];
   lastError: string | null;
+  snapshotAgeMs?: number | null;
+  pipeline?: PipelineMetrics;
 }
 
 export interface AddonRoutesDeps {
@@ -436,6 +456,7 @@ export interface AddonRoutesDeps {
   logger: LoggerLike;
   pipeline: StreamHandlerApi;
   health: () => HealthReport;
+  settingsKeys?: () => string[];
 }
 
 // ---------------------------------------------------------------------------

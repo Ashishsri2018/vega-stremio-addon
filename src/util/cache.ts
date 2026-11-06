@@ -20,6 +20,9 @@ export class TtlCache<K, V> {
       this.entries.delete(key);
       return undefined;
     }
+    // Refresh insertion order so a burst of one-off keys cannot evict hot entries.
+    this.entries.delete(key);
+    this.entries.set(key, entry);
     return entry.value;
   }
 

@@ -168,9 +168,18 @@ export function matchesEpisode(
   season: number,
   episode?: number,
   episodeName?: string | null,
+  absoluteEpisode?: number | null,
 ): boolean {
   if (typeof title !== "string" || title.length === 0) return false;
   if (!Number.isInteger(season)) return false;
+
+  const absolute =
+    typeof absoluteEpisode === "number" &&
+    Number.isInteger(absoluteEpisode) &&
+    absoluteEpisode > 0
+      ? absoluteEpisode
+      : null;
+  const specialHint = /\b(?:specials?|ova|oad)\b/i.test(title);
 
   const seasons = extractSeasons(title);
   if (seasons.size > 0 && !seasons.has(season)) return false;
@@ -182,6 +191,7 @@ export function matchesEpisode(
     if (ranges.some((range) => range.season === undefined || range.season === season)) {
       return true;
     }
+    if (season === 0 && specialHint) return true;
     return isSeasonPack(title, season);
   }
 
@@ -190,9 +200,23 @@ export function matchesEpisode(
   for (const range of ranges) {
     if (range.season !== undefined && range.season !== season) continue;
     if (episode >= range.from && episode <= range.to) return true;
+    if (
+      range.season === undefined &&
+      absolute !== null &&
+      absolute >= range.from &&
+      absolute <= range.to
+    ) {
+      return true;
+    }
   }
 
   if (ranges.length > 0) return false;
+
+  if (season === 0 && specialHint) {
+    const specialNumber =
+      /\b(?:specials?|ova|oad)\s*(?:episode|ep|e)?\s*\.?\s*(\d{1,3})(?!\d)/i.exec(title);
+    return specialNumber ? Number(specialNumber[1]) === episode : true;
+  }
 
   if (episodeName) {
     const normalizedName = normalizeTitle(episodeName);

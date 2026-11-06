@@ -592,4 +592,26 @@ describe("provider context", () => {
     expect((failure as { response?: { status?: number } }).response?.status).toBe(404);
     expect((failure as { code?: string }).code).toBe("ERR_BAD_REQUEST");
   });
+
+  it("exposes Web Response body helpers on shim responses", async () => {
+    const { transport } = recordingTransport();
+    installGlobalFetch({
+      transport,
+      cookieJar: fakeCookieJar(),
+      logger: makeLogger(),
+      getActiveUrls: () => null,
+    });
+
+    const response = await fetch("https://provider.example/file.txt");
+    expect(response.bodyUsed).toBe(false);
+    expect(response.body).toBeInstanceOf(ReadableStream);
+
+    const clone = response.clone();
+    expect(clone).not.toBe(response);
+    expect(await response.bytes()).toEqual(new Uint8Array(Buffer.from("live")));
+    expect(response.bodyUsed).toBe(true);
+    expect(clone.bodyUsed).toBe(false);
+    expect(await clone.text()).toBe("live");
+    expect(clone.bodyUsed).toBe(true);
+  });
 });

@@ -89,6 +89,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function failureSummary(
+  failures: ReadonlyArray<{ error?: string }>,
+  total: number,
+): string | null {
+  if (failures.length === 0) return null;
+  const first = failures.find((failure) => failure.error)?.error;
+  const label = `${failures.length}/${total} provider update(s) failed`;
+  if (!first) return label;
+  return `${label}: ${first.slice(0, 300)}`;
+}
+
 function stripBom(text: string): string {
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
@@ -619,7 +630,7 @@ export class Updater {
       if (successes.length > 0 || failures.length === 0) {
         draft.lastSuccess = now;
       }
-      draft.lastError = null;
+      draft.lastError = failureSummary(failures, entries.length);
     });
     this.failureCount = 0;
 
@@ -881,7 +892,10 @@ export class Updater {
         if (target.etagUpdate !== undefined) draft.headEtag = target.etagUpdate;
         draft.providers = providerState;
         draft.lastSuccess = now;
-        draft.lastError = null;
+        draft.lastError =
+          data.entries.length > loaded.size
+            ? `${data.entries.length - loaded.size}/${data.entries.length} provider(s) failed to install`
+            : null;
         draft.nextCheck = isoAfter(this.computeNextCheckMs());
       });
       this.failureCount = 0;

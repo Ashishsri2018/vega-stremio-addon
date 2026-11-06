@@ -22,7 +22,7 @@ function defaults(): NormalizedProviderSettings {
   return { skipTimings: false, kv: {} };
 }
 
-function parseSettingsJson(raw: string, label: string): ProviderSettingsFile {
+export function parseSettingsJson(raw: string, label: string): ProviderSettingsFile {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
@@ -94,6 +94,10 @@ export class SettingsManager implements SettingsManagerApi {
       skipTimings: this.current.skipTimings,
       kv: { ...this.current.kv },
     };
+  }
+
+  listConfiguredKeys(): string[] {
+    return Array.from(this.explicitKeys).sort();
   }
 
   async load(): Promise<void> {

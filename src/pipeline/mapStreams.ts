@@ -92,17 +92,26 @@ function normalizeSubtitles(
 ): StremioSubtitle[] {
   if (!Array.isArray(subtitles)) return [];
   const result: StremioSubtitle[] = [];
+  const seenUrls = new Set<string>();
 
   subtitles.forEach((track) => {
     if (!track || typeof track !== "object") return;
     const uri = trimString(track.uri);
-    if (!parseHttpUrl(uri)) return;
-    const language = trimString(track.language) || "en";
+    if (!parseHttpUrl(uri) || seenUrls.has(uri)) return;
+    seenUrls.add(uri);
+    const language =
+      trimString(track.language).toLowerCase().replace(/_/g, "-") || "en";
+    const title = trimString(track.title);
     const id =
       result.length === 0
         ? `${providerValue}-${streamIndex}`
         : `${providerValue}-${streamIndex}-${result.length}`;
-    result.push({ id, url: uri, lang: language });
+    result.push({
+      id,
+      url: uri,
+      lang: language,
+      ...(title ? { title } : {}),
+    });
   });
 
   return result;

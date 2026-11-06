@@ -661,3 +661,365 @@ describe("StreamPipeline limits, cache and validation", () => {
     expect(acquire).not.toHaveBeenCalled();
   });
 });
+
+describe("StreamPipeline caching and coalescing", () => {
+  it("coalesces concurrent identical requests into one provider invocation", async () => {
+    const post: Post = {
+      title: "The Shawshank Redemption 1994",
+      link: "https://coalesce.test/post",
+    };
+    let releaseSearch: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseSearch = resolve;
+    });
+    const getSearchPosts = vi.fn(async () => {
+      await gate;
+      return [post];
+    });
+    const bundle = movieProvider({
+      value: "coalesce",
+      url: "https://coalesce.test/1080.mp4",
+    });
+    bundle.modules.posts = { getSearchPosts };
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const first = pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    const second = pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    releaseSearch?.();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(getSearchPosts).toHaveBeenCalledTimes(1);
+    expect(firstResult.map((stream) => stream.url)).toEqual([
+      "https://coalesce.test/1080.mp4",
+    ]);
+    expect(secondResult).toEqual(firstResult);
+    pipeline.dispose();
+  });
+
+  it("does not cancel shared work when one caller aborts", async () => {
+    let releaseSearch: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseSearch = resolve;
+    });
+    const getSearchPosts = vi.fn(async () => {
+      await gate;
+      return [
+        { title: "The Shawshank Redemption 1994", link: "https://shared.test/post" },
+      ];
+    });
+    const bundle = movieProvider({
+      value: "shared",
+      url: "https://shared.test/1080.mp4",
+    });
+    bundle.modules.posts = { getSearchPosts };
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const controller = new AbortController();
+    const aborted = pipeline.handle({ type: "movie", imdbId: "tt0111161" }, controller.signal);
+    const survivor = pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    await expect(aborted).resolves.toEqual([]);
+    releaseSearch?.();
+
+    await expect(survivor).resolves.toEqual([
+      expect.objectContaining({ url: "https://shared.test/1080.mp4" }),
+    ]);
+    expect(getSearchPosts).toHaveBeenCalledTimes(1);
+    pipeline.dispose();
+  });
+
+  it("honors PROVIDER_CACHE_TTL_MS and STREAM_CACHE_TTL_MS", async () => {
+    const getSearchPosts = vi.fn(async () => [
+      { title: "The Shawshank Redemption 1994", link: "https://ttl.test/post" },
+    ]);
+    const bundle = movieProvider({
+      value: "ttl",
+      url: "https://ttl.test/1080.mp4",
+    });
+    bundle.modules.posts = { getSearchPosts };
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig({ providerCacheTtlMs: 20, streamCacheTtlMs: 20 }),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(getSearchPosts).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(getSearchPosts).toHaveBeenCalledTimes(2);
+    pipeline.dispose();
+  });
+
+  it("negative-caches empty results briefly", async () => {
+    const getSearchPosts = vi.fn(async () => []);
+    const bundle = makeBundle("none", "None", {
+      posts: { getSearchPosts },
+    });
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(null),
+    });
+
+    await expect(
+      pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
+    ).resolves.toEqual([]);
+    await expect(
+      pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
+    ).resolves.toEqual([]);
+    expect(getSearchPosts).toHaveBeenCalledTimes(1);
+    expect(pipeline.getMetrics().emptyResults).toBe(1);
+    pipeline.dispose();
+  });
+
+  it("tracks request, cache and stream metrics", async () => {
+    const bundle = movieProvider({
+      value: "metrics",
+      url: "https://metrics.test/1080.mp4",
+    });
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    const metrics = pipeline.getMetrics();
+    expect(metrics.requests).toBe(2);
+    expect(metrics.cacheMisses).toBe(1);
+    expect(metrics.cacheHits).toBe(1);
+    expect(metrics.cacheEntries.stream).toBe(1);
+    expect(metrics.cacheEntries.search).toBe(1);
+    pipeline.dispose();
+  });
+});
+
+describe("StreamPipeline request shaping", () => {
+  it("applies per-request provider include and exclude filters", async () => {
+    const alpha = movieProvider({
+      value: "alpha",
+      url: "https://alpha.test/1080.mp4",
+    });
+    const beta = movieProvider({
+      value: "beta",
+      url: "https://beta.test/720.mp4",
+      quality: "720p",
+    });
+    const gamma = movieProvider({
+      value: "gamma",
+      url: "https://gamma.test/480.mp4",
+      quality: "480p",
+    });
+    const { registry } = makeRegistry([alpha, beta, gamma]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const only = await pipeline.handle({
+      type: "movie",
+      imdbId: "tt0111161",
+      providers: ["ALPHA"],
+    });
+    expect(only.map((stream) => stream.url)).toEqual(["https://alpha.test/1080.mp4"]);
+
+    const excluded = await pipeline.handle({
+      type: "movie",
+      imdbId: "tt0111161",
+      disabledProviders: ["alpha", "beta"],
+    });
+    expect(excluded.map((stream) => stream.url)).toEqual(["https://gamma.test/480.mp4"]);
+    pipeline.dispose();
+  });
+
+  it("tries original titles plus season and absolute season variants", async () => {
+    const queries: string[] = [];
+    const bundle = makeBundle("variants", "Variants", {
+      posts: {
+        getSearchPosts: async ({ searchQuery }) => {
+          queries.push(searchQuery);
+          return [];
+        },
+      },
+    });
+    const meta: CinemetaMeta = {
+      id: "tt0903747",
+      type: "series",
+      name: "The Wire",
+      originalName: "Sur ecoute",
+      videos: [{ season: 1, episode: 1 }],
+    };
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(meta),
+    });
+
+    await pipeline.handle({
+      type: "series",
+      imdbId: "tt0903747",
+      season: 1,
+      episode: 1,
+    });
+    expect(queries).toEqual([
+      "The Wire",
+      "Sur ecoute",
+      "The Wire series",
+      "Sur ecoute series",
+      "The Wire S01",
+      "The Wire season 1",
+    ]);
+    pipeline.dispose();
+  });
+
+  it("uses year and article-stripped variants for movies", async () => {
+    const queries: string[] = [];
+    const bundle = makeBundle("movievariants", "Movie Variants", {
+      posts: {
+        getSearchPosts: async ({ searchQuery }) => {
+          queries.push(searchQuery);
+          return [];
+        },
+      },
+    });
+    const meta: CinemetaMeta = {
+      id: "tt0133093",
+      type: "movie",
+      name: "The Matrix",
+      year: "1999",
+    };
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(meta),
+    });
+
+    await pipeline.handle({ type: "movie", imdbId: "tt0133093" });
+    expect(queries).toEqual(["The Matrix", "The Matrix 1999", "The Matrix movie", "Matrix"]);
+    pipeline.dispose();
+  });
+
+  it("maps season/episode to absolute episode numbers from Cinemeta", async () => {
+    const meta: CinemetaMeta = {
+      id: "tt0903747",
+      type: "series",
+      name: "Breaking Bad",
+      year: "2008",
+      videos: [
+        { season: 1, episode: 1, name: "One" },
+        { season: 1, episode: 2, name: "Two" },
+        { season: 1, episode: 3, name: "Three" },
+        { season: 2, episode: 1, name: "Four" },
+        { season: 2, episode: 2, name: "Five" },
+        { season: 2, episode: 3, name: "Six" },
+      ],
+    };
+    const getEpisodes = vi.fn(async () => [
+      { title: "Episode 4", link: "https://abs.test/4" },
+      { title: "Episode 5", link: "https://abs.test/5" },
+      { title: "Episode 6", link: "https://abs.test/6" },
+    ]);
+    const bundle = seriesBundle({
+      meta: {
+        title: "Breaking Bad",
+        imdbId: "tt0903747",
+        type: "series",
+        linkList: [{ episodesLink: "https://abs.test/episodes" }],
+      },
+      episodes: { getEpisodes },
+      stream: {
+        getStream: async ({ link }) => [{ server: "Abs", link, quality: "1080p" }],
+      },
+    });
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(meta),
+    });
+
+    const streams = await pipeline.handle({
+      type: "series",
+      imdbId: "tt0903747",
+      season: 2,
+      episode: 2,
+    });
+    expect(streams.map((stream) => stream.url)).toEqual(["https://abs.test/5"]);
+    pipeline.dispose();
+  });
+
+  it("orders providers by recent latency and failures", async () => {
+    const order: string[] = [];
+    const failing = makeBundle("slowfail", "Slow Fail", {
+      posts: {
+        getSearchPosts: async () => {
+          order.push("slowfail");
+          throw new Error("nope");
+        },
+      },
+    });
+    const fast = movieProvider({
+      value: "fastwin",
+      url: "https://fastwin.test/1080.mp4",
+    });
+    fast.modules.posts = {
+      getSearchPosts: async () => {
+        order.push("fastwin");
+        return [
+          { title: "The Shawshank Redemption 1994", link: "https://fastwin.test/post" },
+        ];
+      },
+    };
+    const { registry } = makeRegistry([failing, fast]);
+    const pipeline = new StreamPipeline({
+      config: testConfig({
+        searchConcurrency: 1,
+        providerCacheTtlMs: 5,
+        streamCacheTtlMs: 5,
+      }),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(order).toEqual(["slowfail", "fastwin"]);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(order).toEqual(["slowfail", "fastwin", "fastwin", "slowfail"]);
+    expect(pipeline.getMetrics().providerFailures).toBeGreaterThanOrEqual(2);
+    pipeline.dispose();
+  });
+});

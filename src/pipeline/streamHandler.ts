@@ -6,6 +6,7 @@ import type {
   LoggerLike,
   MediaType,
   PipelineDeps,
+  PipelineMetrics,
   Post,
   ProviderBundle,
   ProviderMeta,
@@ -26,8 +27,8 @@ import { extractYear, normalizeTitle, rankCandidates } from "./match.js";
 import { isSeasonPack, matchesEpisode } from "./episodes.js";
 import { mapProviderStreams, sortStreams } from "./mapStreams.js";
 
-const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
-const MAPPING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const NEGATIVE_CACHE_TTL_MS = 30 * 1000;
+const MAX_SEARCH_VARIANTS = 6;
 const BREAKER_WINDOW_MS = 10 * 60 * 1000;
 const BREAKER_OPEN_MS = 10 * 60 * 1000;
 const BREAKER_THRESHOLD = 3;
@@ -38,6 +39,8 @@ const MAX_STREAM_CALLS_PER_REQUEST = 40;
 const MAX_TOTAL_STREAMS = 200;
 const STREAM_CONCURRENCY_PER_PROVIDER = 3;
 const SETTLE_TICK_MS = 250;
+const DEFAULT_PROVIDER_SCORE = 15_000;
+const FAILURE_PENALTY_MS = 30_000;
 
 interface Candidate {
   post: Post;
@@ -51,8 +54,11 @@ interface RequestInfo {
   year: string | number | null;
   season: number;
   episode?: number;
+  absoluteEpisode: number | null;
   episodeName: string | null;
   variants: string[];
+  providers: Set<string> | null;
+  disabledProviders: Set<string>;
 }
 
 interface ResolvedLink {
@@ -83,6 +89,17 @@ interface BreakerState {
   openUntil: number;
 }
 
+interface ProviderStat {
+  avgLatencyMs: number;
+  failures: number;
+}
+
+interface InFlightRequest {
+  promise: Promise<StremioStream[]>;
+  controller: AbortController;
+  waiters: number;
+}
+
 interface EpisodeJob {
   url: string;
 }
@@ -100,6 +117,21 @@ function readMetaField(meta: ProviderMeta, key: string): unknown {
   return value;
 }
 
+function parseProviderList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const provider = item.trim();
+    if (!/^[A-Za-z0-9_.-]+$/.test(provider)) continue;
+    if (!result.some((existing) => existing.toLowerCase() === provider.toLowerCase())) {
+      result.push(provider);
+    }
+    if (result.length >= 50) break;
+  }
+  return result.length > 0 ? result : undefined;
+}
+
 function parseRequest(value: unknown): StreamRequest | null {
   if (!value || typeof value !== "object") return null;
   const request = value as Record<string, unknown>;
@@ -107,10 +139,17 @@ function parseRequest(value: unknown): StreamRequest | null {
   if (typeof request.imdbId !== "string" || !/^tt\d{7,10}$/.test(request.imdbId)) {
     return null;
   }
+  const providers = parseProviderList(request.providers);
+  const disabledProviders = parseProviderList(request.disabledProviders);
 
   if (request.type === "movie") {
     if (request.season !== undefined || request.episode !== undefined) return null;
-    return { type: "movie", imdbId: request.imdbId };
+    return {
+      type: "movie",
+      imdbId: request.imdbId,
+      ...(providers ? { providers } : {}),
+      ...(disabledProviders ? { disabledProviders } : {}),
+    };
   }
 
   if (
@@ -137,6 +176,8 @@ function parseRequest(value: unknown): StreamRequest | null {
     imdbId: request.imdbId,
     season: request.season,
     ...(request.episode !== undefined ? { episode: request.episode } : {}),
+    ...(providers ? { providers } : {}),
+    ...(disabledProviders ? { disabledProviders } : {}),
   };
 }
 
@@ -175,6 +216,35 @@ function findEpisodeName(
   return trimString(video?.name) || trimString(video?.title) || null;
 }
 
+function computeAbsoluteEpisode(
+  meta: CinemetaMeta | null,
+  season: number,
+  episode: number | undefined,
+): number | null {
+  if (!meta || episode === undefined || season <= 0 || !Array.isArray(meta.videos)) {
+    return null;
+  }
+  const maxBySeason = new Map<number, number>();
+  for (const video of meta.videos) {
+    const videoSeason = Number(video.season);
+    const videoEpisode = Number(video.episode);
+    if (!Number.isInteger(videoSeason) || !Number.isInteger(videoEpisode)) continue;
+    if (videoSeason < 1 || videoEpisode < 1) continue;
+    maxBySeason.set(videoSeason, Math.max(maxBySeason.get(videoSeason) ?? 0, videoEpisode));
+  }
+  if (!maxBySeason.has(season) || maxBySeason.size < 2) return null;
+
+  let previous = 0;
+  for (let index = 1; index < season; index += 1) {
+    previous += maxBySeason.get(index) ?? 0;
+  }
+  return previous + episode;
+}
+
+function stripLeadingArticle(title: string): string {
+  return title.replace(/^(?:the|a|an)\s+/i, "").trim();
+}
+
 function extractMetaYear(meta: CinemetaMeta): string | number | null {
   const year = (meta as unknown as Record<string, unknown>).year;
   if (typeof year === "number" || typeof year === "string") return year;
@@ -196,10 +266,21 @@ export class StreamPipeline implements StreamHandlerApi {
   private readonly cinemeta: PipelineDeps["cinemeta"];
   private readonly disabledProviders: Set<string>;
 
-  private readonly searchCache = new TtlCache<string, Post[]>(SEARCH_CACHE_TTL_MS);
-  private readonly mappingCache = new TtlCache<string, Candidate>(MAPPING_CACHE_TTL_MS);
+  private readonly searchCache: TtlCache<string, Post[]>;
+  private readonly mappingCache: TtlCache<string, Candidate>;
   private readonly streamCache: TtlCache<string, StremioStream[]>;
   private readonly breakers = new Map<string, BreakerState>();
+  private readonly providerStats = new Map<string, ProviderStat>();
+  private readonly inFlight = new Map<string, InFlightRequest>();
+  private readonly metrics = {
+    requests: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    emptyResults: 0,
+    deadlineHits: 0,
+    settleHits: 0,
+    providerFailures: 0,
+  };
   private readonly unsubscribe: () => void;
   private disposed = false;
   private generation = 0;
@@ -212,6 +293,12 @@ export class StreamPipeline implements StreamHandlerApi {
     this.disabledProviders = new Set(
       deps.config.disabledProviders.map((value) => value.toLowerCase()),
     );
+    this.searchCache = new TtlCache<string, Post[]>(
+      deps.config.providerCacheTtlMs,
+    );
+    this.mappingCache = new TtlCache<string, Candidate>(
+      deps.config.providerCacheTtlMs,
+    );
     this.streamCache = new TtlCache<string, StremioStream[]>(
       deps.config.streamCacheTtlMs,
       500,
@@ -219,11 +306,95 @@ export class StreamPipeline implements StreamHandlerApi {
     this.unsubscribe = deps.registry.onActivate(() => this.clearCaches());
   }
 
+  getMetrics(): PipelineMetrics {
+    const now = Date.now();
+    const breakers: Record<string, "open" | "closed"> = {};
+    for (const [provider, state] of this.breakers) {
+      breakers[provider] = state.openUntil > now ? "open" : "closed";
+    }
+    return {
+      ...this.metrics,
+      cacheEntries: {
+        search: this.searchCache.size,
+        mapping: this.mappingCache.size,
+        stream: this.streamCache.size,
+      },
+      breakers,
+    };
+  }
+
   async handle(request: StreamRequest, signal?: AbortSignal): Promise<StremioStream[]> {
     const parsed = parseRequest(request);
     if (!parsed || signal?.aborted) return [];
 
-    const lease = this.registry.acquire();
+    this.metrics.requests += 1;
+    const cacheKey = this.streamCacheKey(parsed);
+    const cached = this.streamCache.get(cacheKey);
+    if (cached !== undefined) {
+      this.metrics.cacheHits += 1;
+      return cached.slice();
+    }
+    this.metrics.cacheMisses += 1;
+
+    let entry = this.inFlight.get(cacheKey);
+    if (!entry) {
+      const controller = new AbortController();
+      const lease = this.registry.acquire();
+      const created: InFlightRequest = {
+        controller,
+        waiters: 0,
+        promise: Promise.resolve([]),
+      };
+      created.promise = this.execute(parsed, cacheKey, controller.signal, lease).finally(
+        () => {
+          if (this.inFlight.get(cacheKey) === created) this.inFlight.delete(cacheKey);
+          lease.release();
+        },
+      );
+      this.inFlight.set(cacheKey, created);
+      entry = created;
+    }
+
+    entry.waiters += 1;
+    try {
+      return await this.awaitShared(entry.promise, signal);
+    } finally {
+      entry.waiters -= 1;
+      if (entry.waiters <= 0) {
+        entry.controller.abort(new Error("all callers aborted"));
+      }
+    }
+  }
+
+  private awaitShared(
+    promise: Promise<StremioStream[]>,
+    signal?: AbortSignal,
+  ): Promise<StremioStream[]> {
+    if (!signal) return promise.then((streams) => streams.slice());
+    if (signal.aborted) return Promise.resolve([]);
+
+    return new Promise<StremioStream[]>((resolve, reject) => {
+      const onAbort = (): void => resolve([]);
+      signal.addEventListener("abort", onAbort, { once: true });
+      promise.then(
+        (streams) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(streams.slice());
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  private async execute(
+    parsed: StreamRequest,
+    cacheKey: string,
+    workSignal: AbortSignal,
+    lease: ReturnType<PipelineDeps["registry"]["acquire"]>,
+  ): Promise<StremioStream[]> {
     let deadlineTimer: NodeJS.Timeout | undefined;
     let settleTimer: NodeJS.Timeout | undefined;
     let abortHandler: (() => void) | undefined;
@@ -233,18 +404,12 @@ export class StreamPipeline implements StreamHandlerApi {
       const snapshot = lease.snapshot;
       if (!snapshot || snapshot.bundles.size === 0) return [];
 
-      const cacheKey = this.streamCacheKey(parsed);
-      const cached = this.streamCache.get(cacheKey);
-      if (cached) return cached.slice();
-
       const startedAt = Date.now();
       const deadlineAt = startedAt + Math.max(1, this.config.globalDeadlineMs);
-      const info = await this.resolveInfo(parsed, controller, deadlineAt, signal);
+      const info = await this.resolveInfo(parsed, controller, deadlineAt, workSignal);
       if (!info) return [];
 
-      const combinedSignal = signal
-        ? AbortSignal.any([signal, controller.signal])
-        : controller.signal;
+      const combinedSignal = AbortSignal.any([workSignal, controller.signal]);
       const ctx: InternalContext = {
         info,
         deadlineAt,
@@ -268,6 +433,7 @@ export class StreamPipeline implements StreamHandlerApi {
         if (ctx.stopped) return;
         ctx.stopped = true;
         ctx.deadlineHit = true;
+        this.metrics.deadlineHits += 1;
         controller.abort(new TimeoutError("global deadline reached"));
         finishEarly();
       }, Math.max(1, deadlineAt - Date.now()));
@@ -275,14 +441,17 @@ export class StreamPipeline implements StreamHandlerApi {
       settleTimer = this.startSettleTimer(ctx, startedAt, controller, finishEarly);
 
       const abortPromise = new Promise<StremioStream[]>((resolve) => {
-        if (!signal) return;
+        if (workSignal.aborted) {
+          resolve(this.finalize(ctx.collected));
+          return;
+        }
         abortHandler = () => {
           if (ctx.stopped) return;
           ctx.stopped = true;
           controller.abort(new Error("request aborted"));
           resolve(this.finalize(ctx.collected));
         };
-        signal.addEventListener("abort", abortHandler, { once: true });
+        workSignal.addEventListener("abort", abortHandler, { once: true });
       });
 
       const work = this.runRequest(ctx, snapshot)
@@ -302,19 +471,22 @@ export class StreamPipeline implements StreamHandlerApi {
 
       if (
         !ctx.stopped &&
-        !signal?.aborted &&
-        this.generation === ctx.generation &&
-        result.length > 0
+        !workSignal.aborted &&
+        this.generation === ctx.generation
       ) {
-        this.streamCache.set(cacheKey, result.slice());
+        this.streamCache.set(
+          cacheKey,
+          result.slice(),
+          result.length > 0 ? undefined : NEGATIVE_CACHE_TTL_MS,
+        );
       }
+      if (result.length === 0) this.metrics.emptyResults += 1;
 
       return result;
     } finally {
       if (deadlineTimer) clearTimeout(deadlineTimer);
       if (settleTimer) clearInterval(settleTimer);
-      if (abortHandler && signal) signal.removeEventListener("abort", abortHandler);
-      lease.release();
+      if (abortHandler) workSignal.removeEventListener("abort", abortHandler);
     }
   }
 
@@ -324,6 +496,7 @@ export class StreamPipeline implements StreamHandlerApi {
     this.mappingCache.clear();
     this.streamCache.clear();
     this.breakers.clear();
+    this.providerStats.clear();
   }
 
   dispose(): void {
@@ -331,10 +504,20 @@ export class StreamPipeline implements StreamHandlerApi {
     this.disposed = true;
     this.unsubscribe();
     this.clearCaches();
+    for (const entry of this.inFlight.values()) {
+      entry.controller.abort(new Error("pipeline disposed"));
+    }
+    this.inFlight.clear();
   }
 
   private streamCacheKey(request: StreamRequest): string {
-    return `${request.type}|${request.imdbId}|${request.season ?? ""}|${request.episode ?? ""}`;
+    const providers = request.providers
+      ? request.providers.map((value) => value.toLowerCase()).sort().join(",")
+      : "";
+    const disabled = request.disabledProviders
+      ? request.disabledProviders.map((value) => value.toLowerCase()).sort().join(",")
+      : "";
+    return `${request.type}|${request.imdbId}|${request.season ?? ""}|${request.episode ?? ""}|${providers}|${disabled}`;
   }
 
   private startSettleTimer(
@@ -355,6 +538,7 @@ export class StreamPipeline implements StreamHandlerApi {
       const settled = !empty && settleMs > 0 && now - ctx.lastProgressAt >= settleMs;
       if (!fenceHit && !settled) return;
       ctx.stopped = true;
+      if (settled) this.metrics.settleHits += 1;
       controller.abort(
         new TimeoutError(settled ? "streams settled" : "empty result fence"),
       );
@@ -418,20 +602,48 @@ export class StreamPipeline implements StreamHandlerApi {
     const variants: string[] = [];
     const seen = new Set<string>();
     const addVariant = (value: string): void => {
+      if (variants.length >= MAX_SEARCH_VARIANTS) return;
       const query = value.trim();
       if (!query || seen.has(query)) return;
       seen.add(query);
       variants.push(query);
     };
 
-    if (meta && title) {
-      addVariant(title);
-      const yearText = formatYearForQuery(year);
-      if (yearText) addVariant(`${title} ${yearText}`);
-      addVariant(`${title} ${request.type}`);
-    } else {
-      addVariant(request.imdbId);
+    const baseTitles: string[] = [];
+    if (meta && title) baseTitles.push(title);
+    const originalName = trimString(meta?.originalName);
+    if (
+      originalName &&
+      !baseTitles.some((value) => value.toLowerCase() === originalName.toLowerCase())
+    ) {
+      baseTitles.push(originalName);
     }
+    if (baseTitles.length === 0) addVariant(request.imdbId);
+
+    const season = request.type === "series" ? request.season ?? 0 : 0;
+    const yearText = formatYearForQuery(year);
+
+    for (const base of baseTitles) addVariant(base);
+    if (yearText) {
+      for (const base of baseTitles) addVariant(`${base} ${yearText}`);
+    }
+    for (const base of baseTitles) addVariant(`${base} ${request.type}`);
+    if (request.type === "series" && season > 0) {
+      addVariant(`${title} S${String(season).padStart(2, "0")}`);
+      addVariant(`${title} season ${season}`);
+    }
+    for (const base of baseTitles) {
+      const stripped = stripLeadingArticle(base);
+      if (stripped && stripped !== base) addVariant(stripped);
+    }
+
+    const providers = request.providers
+      ? new Set(request.providers.map((value) => value.toLowerCase()))
+      : null;
+    const disabledProviders = new Set(
+      (request.disabledProviders ?? []).map((value) => value.toLowerCase()),
+    );
+    const absoluteEpisode = computeAbsoluteEpisode(meta, season, request.episode);
 
     if (request.type === "series") {
       return {
@@ -439,82 +651,143 @@ export class StreamPipeline implements StreamHandlerApi {
         meta,
         title,
         year,
-        season: request.season ?? 0,
+        season,
         ...(request.episode !== undefined ? { episode: request.episode } : {}),
-        episodeName: findEpisodeName(meta, request.season ?? 0, request.episode),
+        absoluteEpisode,
+        episodeName: findEpisodeName(meta, season, request.episode),
         variants,
+        providers,
+        disabledProviders,
       };
     }
 
-    return { request, meta, title, year, season: 0, episodeName: null, variants };
+    return {
+      request,
+      meta,
+      title,
+      year,
+      season: 0,
+      absoluteEpisode: null,
+      episodeName: null,
+      variants,
+      providers,
+      disabledProviders,
+    };
   }
 
   private async runRequest(ctx: InternalContext, snapshot: ProviderSnapshot): Promise<void> {
-    const bundles = Array.from(snapshot.bundles.values()).filter(
-      (bundle) => !this.disabledProviders.has(bundle.entry.value.toLowerCase()),
-    );
+    const bundles = Array.from(snapshot.bundles.values()).filter((bundle) => {
+      const value = bundle.entry.value.toLowerCase();
+      if (this.disabledProviders.has(value) || ctx.info.disabledProviders.has(value)) {
+        return false;
+      }
+      if (ctx.info.providers && ctx.info.providers.size > 0) {
+        return ctx.info.providers.has(value);
+      }
+      return true;
+    });
     if (bundles.length === 0) return;
-    await mapLimitSettled(bundles, this.config.searchConcurrency, async (bundle) => {
+    const ordered = this.orderBundles(bundles);
+    await mapLimitSettled(ordered, this.config.searchConcurrency, async (bundle) => {
       if (ctx.stopped) return;
       await this.runProvider(bundle, ctx);
     });
   }
 
+  private orderBundles(bundles: ProviderBundle[]): ProviderBundle[] {
+    const score = (bundle: ProviderBundle): number => {
+      const stat = this.providerStats.get(bundle.entry.value.toLowerCase());
+      if (!stat) return DEFAULT_PROVIDER_SCORE;
+      return stat.avgLatencyMs + stat.failures * FAILURE_PENALTY_MS;
+    };
+    return bundles
+      .map((bundle, index) => ({ bundle, index, score: score(bundle) }))
+      .sort((a, b) => a.score - b.score || a.index - b.index)
+      .map((entry) => entry.bundle);
+  }
+
+  private recordProviderResult(
+    providerValue: string,
+    durationMs: number,
+    collected: boolean,
+  ): void {
+    const key = providerValue.toLowerCase();
+    const stat = this.providerStats.get(key) ?? { avgLatencyMs: durationMs, failures: 0 };
+    stat.avgLatencyMs =
+      stat.avgLatencyMs > 0 ? Math.round(stat.avgLatencyMs * 0.7 + durationMs * 0.3) : durationMs;
+    if (collected) stat.failures = 0;
+    this.providerStats.set(key, stat);
+  }
+
   private async runProvider(bundle: ProviderBundle, ctx: InternalContext): Promise<void> {
     const providerValue = trimString(bundle.entry.value);
-    if (!providerValue || ctx.stopped) return;
-    if (this.isCircuitOpen(providerValue)) {
-      this.logger.debug("pipeline.provider_circuit_open", { provider: providerValue });
-      return;
-    }
+    const startedAt = Date.now();
+    let collected = false;
+    let tracked = true;
+    try {
+      if (!providerValue || ctx.stopped) {
+        tracked = false;
+        return;
+      }
+      if (this.isCircuitOpen(providerValue)) {
+        tracked = false;
+        this.logger.debug("pipeline.provider_circuit_open", { provider: providerValue });
+        return;
+      }
 
-    const posts = await this.searchProvider(bundle, ctx);
-    if (ctx.stopped || posts.length === 0) return;
+      const posts = await this.searchProvider(bundle, ctx);
+      if (ctx.stopped || posts.length === 0) return;
 
-    const ranked = rankCandidates(
-      posts,
-      { title: ctx.info.title, year: ctx.info.year, type: ctx.info.request.type },
-      MAX_CANDIDATES,
-    );
-    if (ranked.length === 0) return;
+      const ranked = rankCandidates(
+        posts,
+        { title: ctx.info.title, year: ctx.info.year, type: ctx.info.request.type },
+        MAX_CANDIDATES,
+      );
+      if (ranked.length === 0) return;
 
-    const mapping = await this.resolveCandidate(bundle, ranked, ctx);
-    if (ctx.stopped) return;
-    if (!mapping.candidate) {
-      if (mapping.failed) this.recordFailure(providerValue, ctx.generation);
-      return;
-    }
+      const mapping = await this.resolveCandidate(bundle, ranked, ctx);
+      if (ctx.stopped) return;
+      if (!mapping.candidate) {
+        if (mapping.failed) this.recordFailure(providerValue, ctx.generation);
+        return;
+      }
 
-    const links = await this.resolveLinks(bundle, mapping.candidate, ctx);
-    if (ctx.stopped) return;
-    if (links.failed && links.links.length === 0) {
-      this.recordFailure(providerValue, ctx.generation);
-      return;
-    }
-    if (links.links.length === 0) return;
+      const links = await this.resolveLinks(bundle, mapping.candidate, ctx);
+      if (ctx.stopped) return;
+      if (links.failed && links.links.length === 0) {
+        this.recordFailure(providerValue, ctx.generation);
+        return;
+      }
+      if (links.links.length === 0) return;
 
-    const streams = await this.fetchStreams(bundle, links.links, ctx);
-    if (ctx.stopped) return;
-    if (streams.attempted > 0 && streams.streams.length === 0) {
-      this.recordFailure(providerValue, ctx.generation);
-      this.logger.warn("pipeline.provider_no_streams", {
-        provider: providerValue,
-        stage: "stream",
-        imdbId: ctx.info.request.imdbId,
+      const streams = await this.fetchStreams(bundle, links.links, ctx);
+      if (ctx.stopped) return;
+      if (streams.attempted > 0 && streams.streams.length === 0) {
+        this.recordFailure(providerValue, ctx.generation);
+        this.logger.warn("pipeline.provider_no_streams", {
+          provider: providerValue,
+          stage: "stream",
+          imdbId: ctx.info.request.imdbId,
+        });
+        return;
+      }
+      if (streams.streams.length === 0) return;
+
+      const mapped = mapProviderStreams(streams.streams, {
+        providerValue,
+        providerName: trimString(bundle.entry.display_name) || providerValue,
+        includeMagnets: this.config.includeMagnets,
+        perProviderLimit: MAX_STREAMS_PER_PROVIDER,
       });
-      return;
+      if (ctx.stopped || mapped.length === 0) return;
+      ctx.collected.push(...mapped);
+      ctx.lastProgressAt = Date.now();
+      collected = true;
+    } finally {
+      if (tracked && providerValue) {
+        this.recordProviderResult(providerValue, Date.now() - startedAt, collected);
+      }
     }
-    if (streams.streams.length === 0) return;
-
-    const mapped = mapProviderStreams(streams.streams, {
-      providerValue,
-      providerName: trimString(bundle.entry.display_name) || providerValue,
-      includeMagnets: this.config.includeMagnets,
-      perProviderLimit: MAX_STREAMS_PER_PROVIDER,
-    });
-    if (ctx.stopped || mapped.length === 0) return;
-    ctx.collected.push(...mapped);
-    ctx.lastProgressAt = Date.now();
   }
 
   private async searchProvider(bundle: ProviderBundle, ctx: InternalContext): Promise<Post[]> {
@@ -691,7 +964,7 @@ export class StreamPipeline implements StreamHandlerApi {
     meta: ProviderMeta,
     ctx: InternalContext,
   ): Promise<LinkResolution> {
-    const { season, episode, episodeName } = ctx.info;
+    const { season, episode, episodeName, absoluteEpisode } = ctx.info;
     const entries = Array.isArray(meta.linkList) ? meta.linkList : [];
     const specific: ResolvedLink[] = [];
     const pack: ResolvedLink[] = [];
@@ -726,7 +999,7 @@ export class StreamPipeline implements StreamHandlerApi {
       const unknownTitle = title.length === 0;
       const specificMatch = unknownTitle
         ? episode === undefined
-        : matchesEpisode(title, season, episode, episodeName);
+        : matchesEpisode(title, season, episode, episodeName, absoluteEpisode);
       const packMatch = unknownTitle || isSeasonPack(title, season);
 
       if (specificMatch) pushDirect(specific, seenSpecific, entry);
@@ -781,7 +1054,7 @@ export class StreamPipeline implements StreamHandlerApi {
     }
 
     for (const item of episodes) {
-      if (matchesEpisode(item.title, season, episode, episodeName)) {
+      if (matchesEpisode(item.title, season, episode, episodeName, absoluteEpisode)) {
         const link = trimString(item.link);
         if (link && !seenSpecific.has(link)) {
           seenSpecific.add(link);
@@ -908,6 +1181,14 @@ export class StreamPipeline implements StreamHandlerApi {
 
   private recordFailure(providerValue: string, generation?: number): void {
     if (generation !== undefined && generation !== this.generation) return;
+    this.metrics.providerFailures += 1;
+    const providerKey = providerValue.toLowerCase();
+    const stat = this.providerStats.get(providerKey) ?? {
+      avgLatencyMs: DEFAULT_PROVIDER_SCORE,
+      failures: 0,
+    };
+    stat.failures += 1;
+    this.providerStats.set(providerKey, stat);
     const now = Date.now();
     const state = this.breakers.get(providerValue) ?? { failures: [], openUntil: 0 };
     state.failures = state.failures.filter((timestamp) => now - timestamp < BREAKER_WINDOW_MS);

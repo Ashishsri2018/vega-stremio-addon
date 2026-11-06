@@ -75,6 +75,16 @@ const PAGE = `<!doctype html>
     <span class="hint">Comma-separated language codes. Leave blank to keep all subtitles.</span>
   </label>
 
+  <label>Only these providers
+    <input type="text" id="providers" placeholder="All (e.g. torrentio, hdhub4u)" />
+    <span class="hint">Comma-separated provider values. Leave blank to query every provider.</span>
+  </label>
+
+  <label>Exclude providers
+    <input type="text" id="disabledProviders" placeholder="None (e.g. youtube)" />
+    <span class="hint">Comma-separated provider values to skip for this install.</span>
+  </label>
+
   <label>Maximum file size
     <select id="maxSizeMB">
       <option value="">Any</option>
@@ -108,12 +118,15 @@ const PAGE = `<!doctype html>
   </div>
 
   <p class="note">Open this page again from the add-on's gear icon in Stremio to change your filters.</p>
+  SETTINGS_SECTION
 </main>
 <script>
   (function () {
     var maxRes = document.getElementById("maxRes");
     var minRes = document.getElementById("minRes");
     var subtitleLangs = document.getElementById("subtitleLangs");
+    var providers = document.getElementById("providers");
+    var disabledProviders = document.getElementById("disabledProviders");
     var maxSizeMB = document.getElementById("maxSizeMB");
     var includeUnknown = document.getElementById("includeUnknown");
     var includeUnknownSize = document.getElementById("includeUnknownSize");
@@ -142,6 +155,12 @@ const PAGE = `<!doctype html>
           if (Array.isArray(cfg.subtitleLangs)) {
             subtitleLangs.value = cfg.subtitleLangs.join(", ");
           }
+          if (Array.isArray(cfg.providers)) {
+            providers.value = cfg.providers.join(", ");
+          }
+          if (Array.isArray(cfg.disabledProviders)) {
+            disabledProviders.value = cfg.disabledProviders.join(", ");
+          }
           includeUnknown.checked = cfg.includeUnknown !== false;
           includeUnknownSize.checked = cfg.includeUnknownSize !== false;
         }
@@ -163,6 +182,20 @@ const PAGE = `<!doctype html>
         });
       if (langs.length) payload.subtitleLangs = langs;
 
+      function providerList(input) {
+        return input.value
+          .split(",")
+          .map(function (value) { return value.trim(); })
+          .filter(function (value, index, list) {
+            return /^[A-Za-z0-9_.-]+$/.test(value) &&
+              list.map(function (item) { return item.toLowerCase(); }).indexOf(value.toLowerCase()) === index;
+          });
+      }
+      var onlyProviders = providerList(providers);
+      if (onlyProviders.length) payload.providers = onlyProviders;
+      var skipProviders = providerList(disabledProviders);
+      if (skipProviders.length) payload.disabledProviders = skipProviders;
+
       var invalid = payload.maxRes && payload.minRes && payload.minRes > payload.maxRes;
       error.hidden = !invalid;
       error.textContent = invalid ? "Minimum resolution cannot be higher than maximum." : "";
@@ -178,6 +211,8 @@ const PAGE = `<!doctype html>
         payload.minRes === undefined &&
         payload.maxSizeMB === undefined &&
         payload.subtitleLangs === undefined &&
+        payload.providers === undefined &&
+        payload.disabledProviders === undefined &&
         payload.includeUnknown !== false &&
         payload.includeUnknownSize !== false;
       var path = isDefault
@@ -190,6 +225,8 @@ const PAGE = `<!doctype html>
     maxRes.addEventListener("change", update);
     minRes.addEventListener("change", update);
     subtitleLangs.addEventListener("input", update);
+    providers.addEventListener("input", update);
+    disabledProviders.addEventListener("input", update);
     maxSizeMB.addEventListener("change", update);
     includeUnknown.addEventListener("change", update);
     includeUnknownSize.addEventListener("change", update);
@@ -220,6 +257,24 @@ const PAGE = `<!doctype html>
 </html>
 `;
 
-export function renderConfigurePage(): string {
-  return PAGE;
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function renderConfigurePage(
+  options: { configuredKeys?: readonly string[] } = {},
+): string {
+  const keys = Array.from(new Set(options.configuredKeys ?? [])).sort();
+  const settingsSection =
+    keys.length === 0
+      ? ""
+      : `<p class="note">Provider settings currently set: ${keys
+          .map(escapeHtml)
+          .join(", ")}. Values are never exposed.</p>`;
+  return PAGE.replace("SETTINGS_SECTION", settingsSection);
 }

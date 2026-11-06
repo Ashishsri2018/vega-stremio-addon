@@ -21,9 +21,23 @@ docker compose up -d --build
 Install in Stremio with `http://<host>:7000/manifest.json`, or open `http://<host>:7000/configure`
 to build a personalized add-on URL with stream filters.
 
-On the first start the addon downloads the current snapshot (39 providers, about 1.8 MB). The
-server binds after the download completes or after 60 seconds, whichever comes first. If GitHub is
-unreachable, the addon still starts, reports `degraded` on `/health`, and retries in the background.
+On the first start the addon downloads the current snapshot (39 providers, about 1.8 MB) in the
+background while the HTTP server is already accepting requests. Stream requests return no results
+until a snapshot is active, `/health` reports `degraded`, and `/manifest.json` and `/configure` are
+available immediately. If GitHub is unreachable, the addon keeps serving whatever snapshot is on
+disk and retries in the background.
+
+To avoid the first-start download, build the image with a pinned baseline snapshot:
+
+```bash
+docker build --build-arg PROVIDER_SHA=<commit> -t vega-stremio-addon .
+```
+
+The entrypoint seeds that snapshot into an empty `DATA_DIR` and the normal updater refreshes it in
+the background. The build arg is optional; omitting it produces an image with no provider code.
+Review the upstream provider license before distributing such an image. Set `VEGA_ENV_FILE=` (or
+point it at another file) to skip the committed `deploy/beamup.env` defaults, for example in local
+runs and CI smoke tests.
 
 Without Docker:
 
@@ -122,8 +136,9 @@ Beamup notes:
 
 - No persistent disk is mounted: `/data` is container-local, so a redeploy (or a restart that
   recreates the container) re-downloads the provider snapshot and loses KV, cookies, and settings.
-  Use `PROVIDER_SETTINGS_JSON` for persistent settings. The server binds only after bootstrap (up to
-  60 s), so requests immediately after a deploy can be sparse or return 504.
+  Use `PROVIDER_SETTINGS_JSON` for persistent settings. The server binds immediately; the snapshot
+  download runs in the background, so requests immediately after a deploy can return no streams
+  until bootstrap finishes.
 - The swarm service is limited to 1.2 CPU and 1 GB RAM, restarts at most 10 times per 5 minutes
   with a 60 s delay, and each GitHub user can have at most 20 addons.
 - Beamup's nginx proxy is configured to cache `200`/`302` responses for 2 h (subject to the
@@ -218,6 +233,12 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `GLOBAL_DEADLINE_MS` | `45000` | Overall request budget (partial results are returned) |
 | `SETTLE_MS` | `8000` | Finish once collected streams stop arriving for this long (`0` disables) |
 | `EMPTY_FENCE_MS` | `0` | Finish a request with no collected streams after this long (`0` disables) |
+| `STREAM_RATE_LIMIT_PER_MIN` | `120` | Per-IP `/stream` request budget; excess requests get `{"streams":[]}` (`0` disables) |
+| `STREAM_GLOBAL_RATE_LIMIT_PER_MIN` | `600` | Global `/stream` request budget (`0` disables) |
+| `STREAM_MAX_CONCURRENT` | `64` | Concurrent `/stream` pipeline runs (`0` disables) |
+| `PROXY_RATE_LIMIT_PER_MIN` | `240` | Per-IP `/proxy` request budget (`0` disables) |
+| `PROXY_GLOBAL_RATE_LIMIT_PER_MIN` | `1200` | Global `/proxy` request budget (`0` disables) |
+| `PROXY_MAX_CONCURRENT` | `64` | Concurrent `/proxy` requests (`0` disables) |
 | `INCLUDE_MAGNETS` | `false` | Include torrent/magnet streams (playback needs a debrid client) |
 | `PROXY_ENABLED` | `false` | Enable the signed media proxy |
 | `PROXY_SECRET` | empty | HMAC secret; required when the proxy is enabled |

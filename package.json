@@ -23,7 +23,7 @@
     "compression": "^1.8.2",
     "express": "^4.21.2",
     "undici": "^7.30.2",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   },
   "optionalDependencies": {
     "curl-cffi-node": "^0.1.8"

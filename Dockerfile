@@ -5,7 +5,7 @@
 # empty DATA_DIR so fresh containers do not need GitHub at startup. The default is
 # empty so CI builds do not need network access. Review the upstream license
 # before distributing an image that contains provider code.
-FROM node:22-bookworm-slim AS providers
+FROM node:25-bookworm-slim AS providers
 ARG PROVIDER_SHA=""
 ARG PROVIDER_SOURCE="Zenda-Cross/vega-providers"
 WORKDIR /app
@@ -20,7 +20,7 @@ RUN owner="${PROVIDER_SOURCE%%/*}" \
          mkdir -p "/providers-baseline/$owner"; \
        fi
 
-FROM node:22-bookworm-slim AS build
+FROM node:25-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -28,7 +28,7 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:25-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PORT=7000 \
     DATA_DIR=/data \

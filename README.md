@@ -49,8 +49,10 @@ PORT=7000 DATA_DIR=./data node dist/index.js
 
 ## Deployment
 
-The active public deployment runs on **Beamup**:
-`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`.
+The active deployment runs on **Beamup**, but its app name and manifest URL are private. They are
+stored only in the `BEAMUP_REMOTE` repository secret and are never committed or logged. Treat the
+manifest URL like a password and install it directly in Stremio rather than sharing a configuration
+URL.
 
 Pushes to `main` run CI and, after typecheck, tests, build, and the Docker build pass, deploy to
 Beamup automatically. Configure these repository secrets once:
@@ -59,7 +61,7 @@ Beamup automatically. Configure these repository secrets once:
 |---|---|---|
 | `BEAMUP_SSH_PRIVATE_KEY` | yes | Private half of a dedicated SSH key |
 | `BEAMUP_KNOWN_HOSTS` | no | Pinned `a.baby-beamup.club` host key |
-| `BEAMUP_REMOTE` | no | Override the Dokku remote (defaults to this app) |
+| `BEAMUP_REMOTE` | yes | Dokku remote for the private production app, set by the owner |
 | `BEAMUP_EXTRA_ENV` | no | Newline-separated secret `KEY=value` settings |
 
 ```bash
@@ -72,7 +74,8 @@ rm beamup_deploy
 
 Beamup syncs account-level GitHub SSH keys, not per-repository deploy keys, so the public key must
 be added to the GitHub account. Keep the private key only in the encrypted repository secret and
-never commit it. When `BEAMUP_KNOWN_HOSTS` is unset, the workflow falls back to `ssh-keyscan`.
+never commit it. When `BEAMUP_KNOWN_HOSTS` is unset, the workflow falls back to `ssh-keyscan`. CI
+requires `BEAMUP_REMOTE` and masks the remote, app path, and app name in its logs.
 
 Beamup stores environment variables on the app. Normal redeploys keep them, but deleting the app
 deletes them. Non-secret settings live in [`deploy/beamup.env`](deploy/beamup.env), which is copied
@@ -93,16 +96,18 @@ command, so the script reads the current value first and sets each changed secre
 Provider-written KV/cookies still live under ephemeral `/data`, so they are lost on every redeploy
 unless represented in `PROVIDER_SETTINGS_JSON`.
 
-## Deploy to Beamup (active deployment)
+## Deploy to Beamup (private production app)
 
-Beamup is Stremio's own addon PaaS (`baby-beamup.club`). The active Docker deployment is
-`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`.
+Beamup is Stremio's own addon PaaS (`baby-beamup.club`). The production app has a private name and
+URL; do not record them in this repository. Set `BEAMUP_REMOTE` locally or in repository secrets and
+pass it to the commands below.
 
 Beamup identifies users by GitHub username and deploys over SSH/Dokku. For Dockerfile apps the
 project name **must contain `docker`**: without it Beamup configures the swarm service with
 `command: /start web` (the Herokuish entrypoint), and the container fails with
-`exec: "/start": stat /start: no such file or directory` while the proxy returns 504. This repo's
-`beamup.json` therefore uses `"projectName": "vega-stremio-addon-docker"`.
+`exec: "/start": stat /start: no such file or directory` while the proxy returns 504. Choose a
+project name containing `docker` at creation time and keep it out of tracked files. `beamup.json` and
+any local `beamup` git remote are local state and must stay untracked.
 
 Beamup runs a pre-flight `beamup-lint` on the new container. If the app crashes at startup — for
 example because an env value is outside the zod bounds in `src/config.ts` — the push is rejected
@@ -115,22 +120,21 @@ be 1-40) and reproduce locally with the same env before retrying; the old contai
    ssh-keygen -t ed25519 -C beamup-vega-stremio-addon
    # Add ~/.ssh/id_ed25519.pub at GitHub Settings > SSH and GPG keys
    ```
-2. Configure and initialize the CLI (tested with `beamup-cli` 1.3.2 via `npx`):
+2. Configure the CLI (tested with `beamup-cli` 1.3.2 via `npx`):
    ```bash
    npx beamup-cli config   # host: a.baby-beamup.club, GitHub username: <user>
-   npx beamup-cli init     # writes beamup.json and adds the beamup git remote
+   npx beamup-cli init <project-name>  # private name containing docker
    ```
-   Keep `beamup.json` local; it contains deploy state (`lastCommit`) and is not needed by the image.
+   Keep the generated `beamup.json` and local remote untracked, and do not commit the project name.
 3. Deploy the current commit:
    ```bash
-   git push beamup HEAD:master --force
+   git push "$BEAMUP_REMOTE" HEAD:master --force
    ```
 4. Apply secrets after an app recreation (non-secret settings load from the image on startup):
    ```bash
-   BEAMUP_SSH_KEY=~/.ssh/id_ed25519 ./scripts/apply-beamup-env.sh
+   BEAMUP_REMOTE=... BEAMUP_SSH_KEY=~/.ssh/id_ed25519 ./scripts/apply-beamup-env.sh
    ```
-   `<hash>` is the per-user path in the `beamup` remote, for example
-   `dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker`.
+   The remote includes the per-user hash path; never commit or log it.
 
 Beamup notes:
 

@@ -2,13 +2,20 @@
 set -euo pipefail
 
 env_file="${1:-}"
-remote="${BEAMUP_REMOTE:-dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker}"
+remote="${BEAMUP_REMOTE:-}"
 ssh_key="${BEAMUP_SSH_KEY:-$HOME/.ssh/beamup}"
+
+if [ -z "$remote" ]; then
+  echo "BEAMUP_REMOTE is required" >&2
+  exit 1
+fi
 
 host="${remote%%:*}"
 app="${remote#*:}"
-if [ "$host" = "$remote" ] || [ -z "$app" ]; then
-  echo "invalid BEAMUP_REMOTE: $remote" >&2
+if [ "$host" = "$remote" ] || [ -z "$app" ] ||
+  [[ ! "$host" =~ ^[A-Za-z0-9_.@-]+$ ]] ||
+  [[ ! "$app" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "invalid BEAMUP_REMOTE (expected host:owner/app)" >&2
   exit 1
 fi
 
@@ -63,7 +70,7 @@ get_current() {
   local key="$1"
   : >"$output_file"
   if ssh -i "$ssh_key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-    "$host" "config:get $(printf '%q' "$app") $(printf '%q' "$key")" \
+    "$host" "config:get $app $key" \
     >"$output_file" 2>&1; then
     awk '!/^\*/ && !/^INFO:/ && NF { print }' "$output_file"
   fi
@@ -74,8 +81,9 @@ set_value() {
   local value="$2"
   : >"$output_file"
   set +e
+  # Beamup passes the config:set remainder literally; shell-quoting adds backslashes.
   ssh -i "$ssh_key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-    "$host" "config:set $(printf '%q' "$app") $(printf '%q' "$key=$value")" \
+    "$host" "config:set $app $key=$value" \
     >"$output_file" 2>&1
   local status=$?
   set -e

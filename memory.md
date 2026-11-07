@@ -35,13 +35,12 @@ ownership plus an integration pass.
 - Settings seeding produced `*_skipTimings=false` for all provider keys.
 - `PROVIDER_SETTINGS_JSON` overrides the settings file; malformed inline JSON keeps the last good config.
 
-## 2026-10-28 - Render deployment
+## 2026-10-28 - Legacy Render deployment
 
-The public repository is `https://github.com/Ashishsri2018/vega-stremio-addon`. Render service
-`srv-dbgscpff3r2c73aiimkg` runs the free Docker plan in Oregon; GitHub Actions runs CI on commits to
-`main`. The repository owner granted Render's GitHub app access on 2026-10-28, so pushes to `main`
-can trigger Render's webhook auto-deploy. The addon URL is
-`https://vega-stremio-addon-qtjz.onrender.com/manifest.json`.
+The public repository is `https://github.com/Ashishsri2018/vega-stremio-addon`. A legacy Render free
+Docker service in Oregon was used for early testing and was deleted on 2026-11-07. Its service ID
+and URL are intentionally not recorded here. GitHub Actions runs CI on commits to `main`; Render's
+GitHub app auto-deploy was configured at the time.
 
 Deployed checks:
 
@@ -51,9 +50,9 @@ Deployed checks:
 - Series `tt0944947:1:1` warm: 32 streams, ~6 s; first uncached request took 42-52 s on free CPU.
 - Invalid IMDb IDs return `{"streams":[]}`; `HEAD` returns immediately.
 
-The free plan stores data in `/tmp/data` and spins down when idle, so provider snapshots and runtime
-KV/cookies are re-created after a restart. Use `PROVIDER_SETTINGS_JSON` for persistent settings, or
-upgrade to Starter with the disk-enabled `render.yaml` blueprint.
+The free plan stored data in `/tmp/data` and spun down when idle, so provider snapshots and runtime
+KV/cookies were re-created after a restart. Use `PROVIDER_SETTINGS_JSON` for persistent settings, or
+the disk-enabled `render.yaml` blueprint for optional self-hosting.
 
 ### Known issues / notes
 
@@ -65,27 +64,27 @@ upgrade to Starter with the disk-enabled `render.yaml` blueprint.
 
 ## 2026-11-02 - Beamup deployment
 
-Deployed the same Docker image to Stremio's Beamup PaaS. Live app:
-`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`. Global CLI config
-is `/root/beamup-config.json` (host `a.baby-beamup.club`, GitHub user `Ashishsri2018`);
-`beamup.json` is local state with `projectName: vega-stremio-addon-docker`.
+Deployed the same Docker image to Stremio's Beamup PaaS. The app name and URL are private and not
+recorded here; the remote is held in the owner's environment and in the `BEAMUP_REMOTE` repository
+secret. Global CLI config is `/root/beamup-config.json` (host `a.baby-beamup.club`, GitHub user
+`Ashishsri2018`); `beamup.json` is untracked local state.
 
 ### Setup
 
 - Added an account-level GitHub SSH key (`~/.ssh/id_ed25519`, comment
   `beamup-vega-stremio-addon`) via `gh api user/keys`; Beamup syncs account keys, not repo deploy
   keys.
-- Used `beamup-cli` 1.3.2 through `npx`; `beamup init` added the remote
-  `dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker`.
-- First deployment used project name `vega-stremio-addon` and failed: Beamup ran the Herokuish
+- Used `beamup-cli` 1.3.2 through `npx`; `beamup init` added a local remote with the per-user hash
+  path. Never commit that remote or the project name.
+- First deployment used a project name without `docker` and failed: Beamup ran the Herokuish
   `command: /start web`, producing `exec: "/start": stat /start: no such file or directory` and a
-  504. Deleted that app and redeployed as `vega-stremio-addon-docker`; the Dockerfile path then
+  504. Deleted that app and redeployed with a `docker`-suffixed name; the Dockerfile path then
   worked without a `command`.
-- Deploy command: `git push beamup HEAD:master --force`.
+- Deploy command: `git push "$BEAMUP_REMOTE" HEAD:master --force`.
 
 ### Configuration
 
-Applied via `ssh dokku@a.baby-beamup.club config:set a38b6dd4fcd1/vega-stremio-addon-docker ...`:
+Applied via `ssh dokku@a.baby-beamup.club config:set <app-path> ...`:
 `LOG_LEVEL=info INCLUDE_MAGNETS=false PROXY_ENABLED=false UPDATE_INTERVAL_MIN_HOURS=4
 UPDATE_INTERVAL_MAX_HOURS=6 SETTLE_MS=4000 EMPTY_FENCE_MS=0 SEARCH_CONCURRENCY=16
 SEARCH_TIMEOUT_MS=4000 STREAM_TIMEOUT_MS=6000 GLOBAL_DEADLINE_MS=8000`.
@@ -117,25 +116,26 @@ SEARCH_TIMEOUT_MS=4000 STREAM_TIMEOUT_MS=6000 GLOBAL_DEADLINE_MS=8000`.
   the user's key from the host's `authorized_keys` and adds the hashed GitHub username to
   `/etc/beamup/ban_list.txt`, blocking further deploy/config/logs/delete. The addon linter only
   validates the Stremio manifest. Hosting this addon on Beamup carries copyright/platform risk.
-- Old broken app `a38b6dd4fcd1-vega-stremio-addon` was deleted with `delete-addon`.
+- An earlier app created without `docker` in the name was deleted with `delete-addon`.
 
 No source changes were needed for the Beamup deployment.
 
 ## 2026-11-03 - Beamup is the active deployment
 
-- The active public deployment is Beamup
-  (`https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json`). The Render
-  blueprint remains in the repo only as an optional/legacy self-hosting path.
+- Beamup became the active deployment. Its app name and URL are private and intentionally not
+  recorded here. The Render blueprint remains in the repo only as an optional/legacy self-hosting
+  path; the old Render service was deleted on 2026-11-07.
 - Pushes to GitHub `main` run CI but do not update the Beamup app. Beamup deploys stay manual via
-  `git push beamup HEAD:master --force`; config changes use `ssh dokku@a.baby-beamup.club
-  config:set <hash>/vega-stremio-addon-docker KEY=...`.
+  `git push "$BEAMUP_REMOTE" HEAD:master --force`; config changes use `ssh dokku@a.baby-beamup.club
+  config:set <app-path> KEY=...`.
 - Configured ShowBox by setting `PROVIDER_SETTINGS_JSON` with `kv.febboxCookie` as
   `ui=<Febbox JWT>`. The raw JWT alone is rejected by Febbox; the `ui=` prefix is required and was
   verified against `video_quality_list` (authenticated response instead of `Please login`).
 - A GramCinema bearer token was provided, but no active provider in `Zenda-Cross/vega-providers` or
   this addon requires it, so it was not stored.
-- Updated README, AGENTS.md, and architecture.md to state that Beamup is active and Render is
-  optional/legacy. Pushed the docs update to GitHub; no Beamup redeploy was performed.
+- Updated README, AGENTS.md, and architecture.md to reflect Beamup as active and Render as an
+  optional legacy self-hosting path. Pushed the docs update to GitHub; no Beamup redeploy was
+  performed.
 
 ## 2026-11-04 - Subtitle language and file size filters
 
@@ -155,8 +155,8 @@ after the shared stream cache:
 Verification:
 
 - `npm run typecheck && npm test && npm run build`: 256 tests green.
-- Deployed commit `b267bbb` to Beamup with `git push beamup HEAD:master --force`; live `/configure`
-  shows the new controls.
+- Deployed commit `b267bbb` to Beamup with `git push "$BEAMUP_REMOTE" HEAD:master --force`; live
+  `/configure` shows the new controls.
 - Live size filter `{"v":1,"maxSizeMB":2048}` on `tt0944947:1:1`: 0 streams above 2 GB, 6 sized
   streams, unknown-size streams retained.
 - Live subtitle filter `{"v":1,"subtitleLangs":["en"]}` on `tt4574334:1:1`: 3 tracks, all English.
@@ -174,3 +174,16 @@ toggle is cleared.
 - The value is baked into the image and sourced by `docker-entrypoint.sh` at container start;
   it takes effect on the next Beamup deploy.
 - Source default in `src/config.ts` is unchanged (`60000`); only the Beamup deployment overrides it.
+
+## 2026-11-07 - Private Beamup deployment
+
+- Created a replacement Beamup app with a private random name, copied only
+  `PROVIDER_SETTINGS_JSON` from the old app, and verified the value by canonical JSON hash without
+  printing it. Retired the old Beamup app and the legacy Render service.
+- The new app verifies `ok` with 39 providers, `pending: []`; movie `tt0111161` and series
+  `tt0944947:1:1` return non-empty streams.
+- The app name, URL, and remote are not recorded in the repository. CI requires `BEAMUP_REMOTE` and
+  masks the remote and app name; install the manifest URL directly in Stremio, not through
+  AIOStreams or a shared configuration URL.
+- Fixed `scripts/apply-beamup-env.sh`: Beamup's `config:set` wrapper passes values literally, so the
+  script no longer shell-quotes them; quoting added literal backslashes to JSON values.

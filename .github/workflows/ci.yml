@@ -85,7 +85,6 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     environment:
       name: beamup
-      url: https://a38b6dd4fcd1-vega-stremio-addon-docker.baby-beamup.club/manifest.json
     concurrency:
       group: deploy-beamup
       cancel-in-progress: false
@@ -118,13 +117,26 @@ jobs:
           BEAMUP_REMOTE: ${{ secrets.BEAMUP_REMOTE }}
         run: |
           set -uo pipefail
+          if [ -z "${BEAMUP_REMOTE:-}" ]; then
+            echo "::error::BEAMUP_REMOTE repository secret is not set"
+            exit 1
+          fi
+          remote="$BEAMUP_REMOTE"
+          app="${remote#*:}"
+          name="${app##*/}"
+          echo "::add-mask::$remote"
+          echo "::add-mask::$app"
+          echo "::add-mask::$name"
           export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/beamup -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-          remote="${BEAMUP_REMOTE:-dokku@a.baby-beamup.club:a38b6dd4fcd1/vega-stremio-addon-docker}"
           set +e
           output=$(git push "$remote" HEAD:master --force 2>&1)
           status=$?
           set -e
-          printf '%s\n' "$output"
+          sanitized="$output"
+          sanitized="${sanitized//$remote/<beamup-remote>}"
+          sanitized="${sanitized//$app/<beamup-app>}"
+          sanitized="${sanitized//$name/<beamup-app>}"
+          printf '%s\n' "$sanitized"
           if [ "$status" -ne 0 ]; then
             # Beamup currently deploys successfully, then rejects the ref because its
             # beamup-sync-swarm hook cannot parse an empty registry response.

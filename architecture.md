@@ -115,7 +115,9 @@ range responses, rewrites HLS playlist URIs with per-segment tokens, and logs on
 ## Deployment
 
 The `Dockerfile` and entrypoint run on Beamup (the active deployment) and rely on the entrypoint
-briefly starting as root to fix `/data` ownership before dropping to `node`.
+briefly starting as root to fix `/data` ownership before dropping to `node`. The production app
+name and URL are private and intentionally not recorded here; they live only in the
+`BEAMUP_REMOTE` repository secret.
 
 - **Beamup (active):** Stremio's Dokku/swarm PaaS. `beamup-cli` creates an SSH remote
   `dokku@a.baby-beamup.club:<hash>/<project>` and deploys via a force-push to `master`. For a
@@ -125,12 +127,12 @@ briefly starting as root to fix `/data` ownership before dropping to `node`.
   new container; an app that exits at startup (for example, env values outside the zod bounds in
   `src/config.ts`) is rejected as "not a valid Stremio addon" and the old container keeps serving.
 - **Deployment automation:** Pushes to `main` run the GitHub Actions workflow; after `verify` and
-  `docker` succeed, the `deploy-beamup` job force-pushes to Beamup using the
-  `BEAMUP_SSH_PRIVATE_KEY` repository secret (plus optional `BEAMUP_KNOWN_HOSTS` and
-  `BEAMUP_REMOTE`). Non-secret settings are committed in `deploy/beamup.env`, copied into the image,
-  and sourced at container start, so they survive app deletion and recreation. CI then applies
-  `BEAMUP_EXTRA_ENV` secrets with `scripts/apply-beamup-env.sh`, one changed key at a time because
-  Beamup accepts only one `KEY=value` per `config:set`.
+  `docker` succeed, the `deploy-beamup` job force-pushes to Beamup using the required
+  `BEAMUP_REMOTE` secret and `BEAMUP_SSH_PRIVATE_KEY` (plus optional `BEAMUP_KNOWN_HOSTS`). The job
+  masks the remote and app name in logs. Non-secret settings are committed in `deploy/beamup.env`,
+  copied into the image, and sourced at container start, so they survive app deletion and recreation.
+  CI then applies `BEAMUP_EXTRA_ENV` secrets with `scripts/apply-beamup-env.sh`, one changed key at a
+  time because Beamup accepts only one `KEY=value` per `config:set`.
 - **Beamup runtime:** 1.2 CPU / 1 GB RAM per service, restart at most 10 times per 5 minutes with a
   60 s delay, 400 apps per swarm, and 20 addons per GitHub user. No persistent volume is mounted,
   so `/data` is container-local and is lost when the container is recreated (redeploy). The server

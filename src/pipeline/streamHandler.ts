@@ -27,7 +27,6 @@ import { extractYear, normalizeTitle, rankCandidates } from "./match.js";
 import { isSeasonPack, matchesEpisode } from "./episodes.js";
 import { mapProviderStreams, sortStreams } from "./mapStreams.js";
 
-const NEGATIVE_CACHE_TTL_MS = 30 * 1000;
 const MAX_SEARCH_VARIANTS = 6;
 const BREAKER_WINDOW_MS = 10 * 60 * 1000;
 const BREAKER_OPEN_MS = 10 * 60 * 1000;
@@ -79,6 +78,7 @@ interface InternalContext {
   collected: StremioStream[];
   streamCallsLeft: number;
   stopped: boolean;
+  truncated: boolean;
   deadlineHit: boolean;
   lastProgressAt: number;
   generation: number;
@@ -417,6 +417,7 @@ export class StreamPipeline implements StreamHandlerApi {
         collected: [],
         streamCallsLeft: MAX_STREAM_CALLS_PER_REQUEST,
         stopped: false,
+        truncated: false,
         deadlineHit: false,
         lastProgressAt: startedAt,
         generation: this.generation,
@@ -432,6 +433,7 @@ export class StreamPipeline implements StreamHandlerApi {
       deadlineTimer = setTimeout(() => {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        ctx.truncated = true;
         ctx.deadlineHit = true;
         this.metrics.deadlineHits += 1;
         controller.abort(new TimeoutError("global deadline reached"));
@@ -469,16 +471,12 @@ export class StreamPipeline implements StreamHandlerApi {
 
       const result = await Promise.race([work, earlyPromise, abortPromise]);
 
-      if (
-        !ctx.stopped &&
-        !workSignal.aborted &&
-        this.generation === ctx.generation
-      ) {
-        this.streamCache.set(
-          cacheKey,
-          result.slice(),
-          result.length > 0 ? undefined : NEGATIVE_CACHE_TTL_MS,
-        );
+      if (!workSignal.aborted && this.generation === ctx.generation) {
+        const partial = ctx.truncated || result.length === 0;
+        const ttl = partial
+          ? Math.min(this.config.streamPartialCacheTtlMs, this.config.streamCacheTtlMs)
+          : this.config.streamCacheTtlMs;
+        this.streamCache.set(cacheKey, result.slice(), ttl);
       }
       if (result.length === 0) this.metrics.emptyResults += 1;
 
@@ -538,6 +536,7 @@ export class StreamPipeline implements StreamHandlerApi {
       const settled = !empty && settleMs > 0 && now - ctx.lastProgressAt >= settleMs;
       if (!fenceHit && !settled) return;
       ctx.stopped = true;
+      ctx.truncated = true;
       if (settled) this.metrics.settleHits += 1;
       controller.abort(
         new TimeoutError(settled ? "streams settled" : "empty result fence"),

@@ -35,6 +35,7 @@ export interface AppConfig {
   kvFlushMs: number;
   providerCacheTtlMs: number;
   streamCacheTtlMs: number;
+  streamPartialCacheTtlMs: number;
   streamRateLimitPerMin: number;
   streamGlobalRateLimitPerMin: number;
   streamMaxConcurrent: number;
@@ -137,6 +138,7 @@ const schema = z.object({
   KV_FLUSH_MS: envInt(500, 0, 60000),
   PROVIDER_CACHE_TTL_MS: envInt(21600000, 1000, 604800000),
   STREAM_CACHE_TTL_MS: envInt(60000, 0, 3600000),
+  STREAM_PARTIAL_CACHE_TTL_MS: envInt(30000, 0, 3600000),
   STREAM_RATE_LIMIT_PER_MIN: envInt(120, 0, 100000),
   STREAM_GLOBAL_RATE_LIMIT_PER_MIN: envInt(600, 0, 100000),
   STREAM_MAX_CONCURRENT: envInt(64, 0, 10000),
@@ -226,6 +228,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     kvFlushMs: value.KV_FLUSH_MS,
     providerCacheTtlMs: value.PROVIDER_CACHE_TTL_MS,
     streamCacheTtlMs: value.STREAM_CACHE_TTL_MS,
+    streamPartialCacheTtlMs: value.STREAM_PARTIAL_CACHE_TTL_MS,
     streamRateLimitPerMin: value.STREAM_RATE_LIMIT_PER_MIN,
     streamGlobalRateLimitPerMin: value.STREAM_GLOBAL_RATE_LIMIT_PER_MIN,
     streamMaxConcurrent: value.STREAM_MAX_CONCURRENT,

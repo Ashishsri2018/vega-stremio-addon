@@ -187,3 +187,14 @@ toggle is cleared.
   AIOStreams or a shared configuration URL.
 - Fixed `scripts/apply-beamup-env.sh`: Beamup's `config:set` wrapper passes values literally, so the
   script no longer shell-quotes them; quoting added literal backslashes to JSON values.
+
+## 2026-11-07 - Partial stream cache and disabled settle guards on Beamup
+
+- Repeat movie/series requests could return more streams than the first because deadline/settle
+  truncation was never cached while search, mapping, latency, and breaker state persisted.
+- `StreamPipeline` now caches every non-aborted response: complete results use
+  `STREAM_CACHE_TTL_MS`, while deadline/settle-truncated and empty results use
+  `STREAM_PARTIAL_CACHE_TTL_MS` (default 30 s).
+- `deploy/beamup.env` disables `SETTLE_MS` and `EMPTY_FENCE_MS`, so uncached requests use the full
+  10 s global budget before returning.
+- Docs and tests updated (`README.md`, `architecture.md`, `AGENTS.md`, `tests/pipeline.test.ts`).

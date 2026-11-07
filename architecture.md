@@ -81,7 +81,8 @@ Provider bundles expect a `providerContext` with axios, cheerio, browser headers
 8. A global deadline returns partial results; abandoned provider promises are aborted and cannot
    hold the response open.
 
-Caches (search 10m, mapping 6h, streams 60s) are in-memory and cleared on activation.
+Caches (search 10m, mapping 6h, complete streams 60s, truncated/empty streams 30s) are
+in-memory and cleared on activation.
 
 ## User filters
 

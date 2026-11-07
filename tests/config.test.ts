@@ -21,6 +21,8 @@ describe("loadConfig", () => {
     expect(config.searchConcurrency).toBe(16);
     expect(config.settleMs).toBe(8000);
     expect(config.emptyFenceMs).toBe(0);
+    expect(config.streamCacheTtlMs).toBe(60000);
+    expect(config.streamPartialCacheTtlMs).toBe(30000);
     expect(config.streamRateLimitPerMin).toBe(120);
     expect(config.streamGlobalRateLimitPerMin).toBe(600);
     expect(config.streamMaxConcurrent).toBe(64);

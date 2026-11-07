@@ -769,6 +769,87 @@ describe("StreamPipeline caching and coalescing", () => {
     pipeline.dispose();
   });
 
+  it("caches deadline-truncated results at the partial TTL", async () => {
+    const getSearchPosts = vi.fn(async () => [
+      { title: "The Shawshank Redemption 1994", link: "https://partial.test/post" },
+    ]);
+    const fast = movieProvider({
+      value: "partial",
+      url: "https://partial.test/1080.mp4",
+    });
+    fast.modules.posts = { getSearchPosts };
+    const hanging = makeBundle("hang", "Hang", {
+      posts: { getSearchPosts: () => new Promise<Post[]>(() => undefined) },
+    });
+    const { registry } = makeRegistry([fast, hanging]);
+    const pipeline = new StreamPipeline({
+      config: testConfig({
+        settleMs: 0,
+        emptyFenceMs: 0,
+        searchTimeoutMs: 5000,
+        globalDeadlineMs: 150,
+        providerCacheTtlMs: 20,
+        streamCacheTtlMs: 60000,
+        streamPartialCacheTtlMs: 100,
+      }),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const first = await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(first.map((stream) => stream.url)).toEqual([
+      "https://partial.test/1080.mp4",
+    ]);
+    expect(pipeline.getMetrics().deadlineHits).toBe(1);
+
+    const second = await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(second).toEqual(first);
+    expect(getSearchPosts).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const third = await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(third.map((stream) => stream.url)).toEqual([
+      "https://partial.test/1080.mp4",
+    ]);
+    expect(getSearchPosts).toHaveBeenCalledTimes(2);
+    expect(pipeline.getMetrics().cacheHits).toBe(1);
+    pipeline.dispose();
+  });
+
+  it("uses the partial TTL for empty results", async () => {
+    const getSearchPosts = vi.fn(async () => []);
+    const bundle = makeBundle("none-partial", "None", {
+      posts: { getSearchPosts },
+    });
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig({
+        providerCacheTtlMs: 20,
+        streamCacheTtlMs: 60000,
+        streamPartialCacheTtlMs: 20,
+      }),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(null),
+    });
+
+    await expect(
+      pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
+    ).resolves.toEqual([]);
+    await expect(
+      pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
+    ).resolves.toEqual([]);
+    expect(getSearchPosts).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await expect(
+      pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
+    ).resolves.toEqual([]);
+    expect(getSearchPosts).toHaveBeenCalledTimes(2);
+    pipeline.dispose();
+  });
+
   it("negative-caches empty results briefly", async () => {
     const getSearchPosts = vi.fn(async () => []);
     const bundle = makeBundle("none", "None", {

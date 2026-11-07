@@ -199,7 +199,7 @@ gear icon opens the configure page with the current settings pre-filled.
 
 ## Response time
 
-Requests stop early instead of always burning the full `GLOBAL_DEADLINE_MS`:
+The pipeline can stop early instead of always burning the full `GLOBAL_DEADLINE_MS`:
 
 - `SETTLE_MS` (default `8000`): after at least one stream is collected, the request finishes when
   no new stream arrives for this long. Slow or dead providers no longer block the response.
@@ -208,9 +208,13 @@ Requests stop early instead of always burning the full `GLOBAL_DEADLINE_MS`:
   often need more than 25 s to return their first stream, and an early fence makes every series
   request look empty.
 
-Both guards are disabled with `0`; the global deadline remains the absolute cap. On Beamup, cold
-starts (30-60 s) dominate the first request; a keep-warm ping every ~10 minutes avoids most of that
-cost.
+Both guards are disabled with `0`; the global deadline remains the absolute cap. The active Beamup
+deployment disables both to collect as much as possible within its 10 s budget. Results cut short
+by a settle/empty guard or the global deadline are cached for `STREAM_PARTIAL_CACHE_TTL_MS`
+(default `30000`), while naturally completed results use the longer `STREAM_CACHE_TTL_MS`. Empty
+results also use the partial TTL.
+On Beamup, cold starts (30-60 s) dominate the first request; a keep-warm ping every ~10 minutes
+avoids most of that cost.
 
 ## Configuration
 
@@ -253,11 +257,13 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `CINEMETA_URL` | `https://v3-cinemeta.strem.io` | Metadata endpoint |
 | `KV_FLUSH_MS` | `500` | KV/cookie write debounce |
 | `PROVIDER_CACHE_TTL_MS` | `21600000` | Search/mapping cache TTL |
-| `STREAM_CACHE_TTL_MS` | `60000` | Stream cache TTL |
+| `STREAM_CACHE_TTL_MS` | `60000` | Complete stream cache TTL |
+| `STREAM_PARTIAL_CACHE_TTL_MS` | `30000` | TTL for deadline/settle-truncated and empty stream results (`0` disables) |
 
 The active Beamup deployment overrides some defaults in `deploy/beamup.env` (`SEARCH_CONCURRENCY=40`,
 `SEARCH_TIMEOUT_MS=5000`, `META_TIMEOUT_MS=8000`, `STREAM_TIMEOUT_MS=8000`,
-`GLOBAL_DEADLINE_MS=10000`, `STREAM_CACHE_TTL_MS=180000`, `SETTLE_MS=4000`, `EMPTY_FENCE_MS=0`). Beamup's proxy starts returning
+`GLOBAL_DEADLINE_MS=10000`, `STREAM_CACHE_TTL_MS=180000`,
+`STREAM_PARTIAL_CACHE_TTL_MS=30000`, `SETTLE_MS=0`, `EMPTY_FENCE_MS=0`). Beamup's proxy starts returning
 504 when upstream work runs near 17-19 s, so keep `GLOBAL_DEADLINE_MS` at 10 s or less there;
 per-provider timeouts above the global deadline are clamped to the remaining budget.
 

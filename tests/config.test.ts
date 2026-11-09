@@ -18,6 +18,8 @@ describe("loadConfig", () => {
     expect(config.settingsFile).toBe("/data/provider-settings.json");
     expect(config.providerSettingsJson).toBeNull();
     expect(config.cinemetaUrl).toBe("https://v3-cinemeta.strem.io");
+    expect(config.tmdbApiKey).toBeNull();
+    expect(config.tmdbUrl).toBe("https://api.themoviedb.org/3");
     expect(config.searchConcurrency).toBe(16);
     expect(config.settleMs).toBe(8000);
     expect(config.emptyFenceMs).toBe(0);
@@ -48,6 +50,16 @@ describe("loadConfig", () => {
     expect(config.includeMagnets).toBe(true);
     expect(config.updateIntervalMinHours).toBe(0.5);
     expect(config.settingsFile).toBe("/srv/vega/provider-settings.json");
+  });
+
+  it("reads TMDB_API_KEY and trims TMDB_URL", () => {
+    const config = loadConfig({
+      TMDB_API_KEY: "  key  ",
+      TMDB_URL: "https://tmdb.example.com/3/",
+    });
+    expect(config.tmdbApiKey).toBe("key");
+    expect(config.tmdbUrl).toBe("https://tmdb.example.com/3");
+    expect(loadConfig({ TMDB_API_KEY: "   " }).tmdbApiKey).toBeNull();
   });
 
   it("parses DISABLED_PROVIDERS as a trimmed, deduplicated list", () => {

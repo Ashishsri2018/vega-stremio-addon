@@ -17,7 +17,7 @@ import { createProxyHandler } from "../proxy/server.js";
 import { createProxyToken } from "../proxy/sign.js";
 import { renderConfigurePage } from "./configure.js";
 import { ADDON_ID, getManifest } from "./manifest.js";
-import { parseStreamId } from "./parseId.js";
+import { contentIdOf, parseStreamId, requestLogFields } from "./parseId.js";
 import { RateLimiter } from "./rateLimit.js";
 import { filterStreams, filterSubtitleTracks, parseUserConfig } from "./userConfig.js";
 
@@ -143,7 +143,7 @@ async function runStreamRequest(
       deps.logger.error("stream_request_failed", {
         requestId,
         type: request.type,
-        imdbId: request.imdbId,
+        ...requestLogFields(request),
         season: request.season,
         episode: request.episode,
         reason: error instanceof Error ? error.name : "unknown",
@@ -182,7 +182,8 @@ async function runStreamRequest(
   const fields = {
     requestId,
     type: request?.type ?? null,
-    imdbId: request?.imdbId ?? null,
+    contentId: request ? contentIdOf(request) : null,
+    imdbId: request && "imdbId" in request ? request.imdbId : null,
     season: request?.season ?? null,
     episode: request?.episode ?? null,
     streamCount,
@@ -273,7 +274,7 @@ async function runSubtitleRequest(
       deps.logger.error("subtitle_request_failed", {
         requestId,
         type: request.type,
-        imdbId: request.imdbId,
+        ...requestLogFields(request),
         season: request.season,
         episode: request.episode,
         reason: error instanceof Error ? error.name : "unknown",
@@ -300,7 +301,8 @@ async function runSubtitleRequest(
   const fields = {
     requestId,
     type: request?.type ?? null,
-    imdbId: request?.imdbId ?? null,
+    contentId: request ? contentIdOf(request) : null,
+    imdbId: request && "imdbId" in request ? request.imdbId : null,
     season: request?.season ?? null,
     episode: request?.episode ?? null,
     subtitleCount,
@@ -375,7 +377,7 @@ export function createApp(deps: AddonRoutesDeps): express.Express {
 
   const serveManifest: RequestHandler = (req, res) => {
     res.setHeader("Cache-Control", "public, max-age=300");
-    res.json(getManifest());
+    res.json(getManifest({ tmdbEnabled: Boolean(deps.config.tmdbApiKey) }));
   };
   app.get("/manifest.json", serveManifest);
   app.get("/:config/manifest.json", serveManifest);

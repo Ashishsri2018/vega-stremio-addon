@@ -144,6 +144,16 @@ describe("manifest", () => {
     expect(ADDON_ID).toBe("community.vega.stremio");
     expect(ADDON_VERSION).toBe("1.0.0");
   });
+
+  it("advertises the tmdb prefix only when TMDB_API_KEY is configured", async () => {
+    const base = await startApp(
+      createApp(makeDeps({ config: makeConfig({ tmdbApiKey: "test-key" }) })),
+    );
+    const response = await nativeFetch(`${base}/manifest.json`);
+    const manifest = (await response.json()) as { idPrefixes: string[] };
+
+    expect(manifest.idPrefixes).toEqual(["tt", "tmdb:"]);
+  });
 });
 
 describe("configured addon", () => {
@@ -401,9 +411,20 @@ describe("parseStreamId", () => {
     ["movie", "tt0111161.json", { type: "movie", imdbId: "tt0111161" }],
     ["movie", "tt0111161:1:1", null],
     ["movie", "tt0111161:1", null],
+    ["movie", "tmdb:550", { type: "movie", tmdbId: 550 }],
+    ["movie", "tmdb:550.json", { type: "movie", tmdbId: 550 }],
+    ["movie", "tmdb:550:1:2", null],
+    ["movie", "tmdb:0", null],
+    ["movie", "tmdb:abc", null],
+    ["movie", "tmdb:", null],
+    ["movie", "tmdb:550:1:2:3", null],
     ["series", "tt0944947:1:1", { type: "series", imdbId: "tt0944947", season: 1, episode: 1 }],
     ["series", "tt0944947:1", { type: "series", imdbId: "tt0944947", season: 1 }],
     ["series", "tt0944947:1:1.json", { type: "series", imdbId: "tt0944947", season: 1, episode: 1 }],
+    ["series", "tmdb:1399:1:1", { type: "series", tmdbId: 1399, season: 1, episode: 1 }],
+    ["series", "tmdb:1399:1", { type: "series", tmdbId: 1399, season: 1 }],
+    ["series", "tmdb:1399", null],
+    ["series", "tmdb:1399:0:1", null],
     ["series", "tt0944947", null],
     ["series", "tt0944947:0:1", null],
     ["series", "tt0944947:1:0", null],
@@ -456,6 +477,8 @@ describe("stream routes", () => {
       "/stream/series/tt0944947:1:1.json",
       "/stream/series/tt0944947:1.json",
       "/stream/movie/tt0133093",
+      "/stream/movie/tmdb:550.json",
+      "/stream/series/tmdb:1399:1:2.json",
     ];
     for (const path of paths) {
       const response = await nativeFetch(`${base}${path}`);
@@ -468,6 +491,8 @@ describe("stream routes", () => {
       { type: "series", imdbId: "tt0944947", season: 1, episode: 1 },
       { type: "series", imdbId: "tt0944947", season: 1 },
       { type: "movie", imdbId: "tt0133093" },
+      { type: "movie", tmdbId: 550 },
+      { type: "series", tmdbId: 1399, season: 1, episode: 2 },
     ]);
   });
 
@@ -485,6 +510,10 @@ describe("stream routes", () => {
       "/stream/series/tt0944947:1:10001.json",
       "/stream/series/tt0944947::1.json",
       "/stream/anime/tt0944947:1:1.json",
+      "/stream/movie/tmdb:abc.json",
+      "/stream/movie/tmdb:0.json",
+      "/stream/movie/tmdb:550:1:2.json",
+      "/stream/series/tmdb:1399.json",
     ];
     for (const path of paths) {
       const response = await nativeFetch(`${base}${path}`);
@@ -824,9 +853,12 @@ describe("subtitle routes", () => {
 
     const series = await nativeFetch(`${base}/subtitles/series/tt0944947:1:2.json`);
     expect(series.status).toBe(200);
+    const tmdb = await nativeFetch(`${base}/subtitles/series/tmdb:1399:1:2.json`);
+    expect(tmdb.status).toBe(200);
     expect(requests).toEqual([
       { type: "movie", imdbId: "tt0111161" },
       { type: "series", imdbId: "tt0944947", season: 1, episode: 2 },
+      { type: "series", tmdbId: 1399, season: 1, episode: 2 },
     ]);
   });
 

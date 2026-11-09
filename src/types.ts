@@ -364,7 +364,7 @@ export interface CinemetaMeta {
 
 export type MediaType = "movie" | "series";
 
-export interface StreamRequest {
+export interface ImdbStreamRequest {
   type: MediaType;
   imdbId: string;
   season?: number;
@@ -373,8 +373,27 @@ export interface StreamRequest {
   disabledProviders?: string[];
 }
 
+export interface TmdbStreamRequest {
+  type: MediaType;
+  tmdbId: number;
+  season?: number;
+  episode?: number;
+  providers?: string[];
+  disabledProviders?: string[];
+}
+
+export type StreamRequest = ImdbStreamRequest | TmdbStreamRequest;
+
 export interface CinemetaApi {
   getMeta(type: MediaType, imdbId: string): Promise<CinemetaMeta | null>;
+}
+
+export interface TmdbApi {
+  getMeta(
+    type: MediaType,
+    tmdbId: number,
+    season?: number,
+  ): Promise<CinemetaMeta | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -469,4 +488,5 @@ export interface PipelineDeps {
   logger: LoggerLike;
   registry: ProviderRegistryApi;
   cinemeta: CinemetaApi;
+  tmdb?: TmdbApi | null;
 }

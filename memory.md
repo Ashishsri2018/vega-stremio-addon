@@ -221,3 +221,27 @@ toggle is cleared.
 - Express answers `HEAD` on every GET route without a body; the new root route is covered by a
   `tests/addon.test.ts` case for GET and HEAD.
 - Docs updated (`README.md`, `architecture.md`).
+
+## 2026-11-09 - Direct TMDB ID support
+
+- Requests now accept `tmdb:<id>[:<season>[:<episode>]]` in addition to IMDb `tt...` IDs. The
+  manifest advertises `idPrefixes: ["tt", "tmdb:"]` only when `TMDB_API_KEY` is set; otherwise it
+  stays exactly `["tt"]` and TMDB requests return `{"streams":[]}`.
+- Providers in this addon search by title and do not accept TMDB IDs, and Cinemeta rejects `tmdb:`
+  IDs. `src/tmdb/client.ts` therefore maps `/movie/{id}` and `/tv/{id}` (with `external_ids`) to
+  Cinemeta-shaped metadata: title, year, episode list from season counts, requested-season episode
+  names, and the IMDb ID when TMDB has one. The IMDb ID drives provider meta matching; otherwise
+  matching falls back to title/year/type. Metadata is cached 6 h; failed lookups are not cached.
+- `StreamRequest` is now a union (`imdbId` or `tmdbId`); `parseStreamId`, `contentIdOf`, and
+  `requestLogFields` in `src/addon/parseId.ts` centralize parsing, cache keys, and logs. Stream and
+  mapping caches key on `contentId` (`tt...`/`tmdb:...`).
+- Config adds `TMDB_API_KEY` (secret) and `TMDB_URL` (default `https://api.themoviedb.org/3`). The
+  client uses `nativeFetch` and never logs request URLs or the key.
+- Tests: new `tests/tmdb.test.ts` (movie/series mapping, season names, missing IMDb ID, 404 and
+  key-redaction), plus TMDB cases in config, addon, and pipeline tests. `npm run typecheck`, 325
+  tests, and `npm run build` pass. Live TMDB smoke returned Fight Club (`tt0137523`) and Breaking Bad
+  season 1 episode names.
+- Docs updated (`README.md`, `architecture.md`, `AGENTS.md`). The key is stored as the dedicated
+  `TMDB_API_KEY` GitHub Actions secret (never in the repo); the deploy step appends it to
+  `BEAMUP_EXTRA_ENV` before `scripts/apply-beamup-env.sh` runs. It can also be placed directly in
+  `BEAMUP_EXTRA_ENV`. `mal:`/`kitsu:` IDs remain unsupported.

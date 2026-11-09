@@ -13,6 +13,7 @@ Stremio client
 Express app (src/addon/routes.ts)
    |-- StreamPipeline (src/pipeline/streamHandler.ts)
    |     |-- CinemetaClient (title/year/episodes, 6h cache)
+   |     |-- TmdbClient (optional, TMDB ID -> Cinemeta-shaped meta, 6h cache)
    |     |-- provider search -> candidate scoring -> meta verification
    |     |-- link resolution (movies, episodes, ranges, packs)
    |     `-- getStream -> Stremio mapping/sorting/filtering
@@ -34,10 +35,11 @@ Express app (src/addon/routes.ts)
 ## Runtime assembly
 
 `src/runtime.ts` constructs the SDK, registry, settings, state, source, and updater. `src/index.ts`
-adds Cinemeta, the pipeline, and the Express app; `src/cli/update.ts` reuses the same runtime and
-updater code path for manual updates. The global fetch override is installed before any provider
-module executes; internal HTTP (GitHub, Cinemeta, proxy) uses `nativeFetch` captured at module load
-to avoid recursion.
+adds Cinemeta, the pipeline, and the Express app; it also creates `TmdbClient` when `TMDB_API_KEY` is
+set and passes it to the pipeline. `src/cli/update.ts` reuses the same runtime and updater code path
+for manual updates. The global fetch override is installed before any provider module executes;
+internal HTTP (GitHub, Cinemeta, TMDB, proxy) uses `nativeFetch` captured at module load to avoid
+recursion.
 
 ## Provider snapshots and updates
 
@@ -67,8 +69,12 @@ Provider bundles expect a `providerContext` with axios, cheerio, browser headers
 
 ## Stream pipeline
 
-1. Parse `tt` ID, type, and optional season/episode. Bad IDs return an empty stream list.
-2. Fetch Cinemeta metadata (6h cache); derive search query variants.
+1. Parse the request ID: `tt<digits>` (IMDb) or, when TMDB is configured, `tmdb:<id>`, with optional
+   season/episode for series. Bad IDs return an empty stream list.
+2. Fetch metadata (6h cache): Cinemeta by IMDb ID, or TMDB movie/TV details (plus `external_ids`) for
+   TMDB IDs. TMDB metadata is converted to the Cinemeta shape; the IMDb ID from TMDB is used for
+   provider meta matching when present. TMDB requests without a configured client return empty
+   without searching providers. Derive search query variants from the metadata.
 3. Search providers concurrently with per-provider timeouts and a circuit breaker (3 failures in
    10 minutes opens it for 10 minutes).
 4. Rank candidates by normalized title/year/type; verify up to 3 candidates per provider via
@@ -82,7 +88,9 @@ Provider bundles expect a `providerContext` with axios, cheerio, browser headers
    hold the response open.
 
 Caches (search 10m, mapping 6h, complete streams 60s, truncated/empty streams 30s) are
-in-memory and cleared on activation.
+in-memory and cleared on activation. Stream and mapping cache keys use a `contentId`
+(`tt...` or `tmdb:...`), so IMDb and TMDB requests for the same title do not collide; provider meta
+matching prefers IMDb IDs and falls back to title/year/type when TMDB has no IMDb ID.
 
 ## User filters
 
@@ -103,10 +111,11 @@ The `/configure` page builds these URLs in the browser; no filter state is store
 ## HTTP surface
 
 `src/addon/routes.ts` adds permissive CORS, a root info JSON, manifest, stream routes, subtitle
-routes, health, optional proxy, JSON 404s, and the HTML `/configure` page. Express answers `HEAD` on
-every GET route without a body. Root/stream/subtitle/health responses are `no-store`; errors never
-leak stack traces or secrets. Health is built from persisted state plus the active registry, with no
-settings values or URLs.
+routes, health, optional proxy, JSON 404s, and the HTML `/configure` page. The manifest advertises
+`idPrefixes: ["tt", "tmdb:"]` only when `TMDB_API_KEY` is configured; otherwise it stays `["tt"]`.
+Express answers `HEAD` on every GET route without a body. Root/stream/subtitle/health responses are
+`no-store`; errors never leak stack traces or secrets. Health is built from persisted state plus the
+active registry, with no settings values or URLs.
 
 Subtitle routes: `GET /subtitles/:type/:path*` and `GET /:config/subtitles/:type/:path*`. The
 `path*` capture holds `<id>.json` plus Stremio's optional extras segment, which `parseStreamId`

@@ -3,7 +3,8 @@
 Self-hosted Stremio addon that serves movie and series streams from the 39 enabled providers in
 [`Zenda-Cross/vega-providers`](https://github.com/Zenda-Cross/vega-providers).
 
-- Streams only, IMDb IDs only (`tt...`), movie and series.
+- Streams only, movie and series. IMDb IDs (`tt...`) always work; direct TMDB IDs (`tmdb:...`)
+  additionally work when `TMDB_API_KEY` is set (the manifest advertises `tmdb:` only then).
 - Provider code is downloaded from GitHub at runtime and executed in-process.
 - Upstream is checked every 4-6 hours and new provider bundles are hot-swapped without a restart.
 - Direct links are returned with the HTTP headers players need; an optional signed proxy is included.
@@ -168,6 +169,8 @@ Beamup notes:
 | `GET /stream/movie/tt0111161.json` | Movie streams |
 | `GET /stream/series/tt0944947:1:1.json` | Series episode streams |
 | `GET /stream/series/tt0944947:1.json` | Season requests (packs and episodes) |
+| `GET /stream/movie/tmdb:550.json` | Movie streams by TMDB ID (requires `TMDB_API_KEY`) |
+| `GET /stream/series/tmdb:1399:1:1.json` | Series episode streams by TMDB ID |
 | `GET /<config>/stream/...` | Streams filtered by the config segment |
 | `GET /subtitles/movie/tt0111161.json` | Provider subtitle tracks (`{id, url, lang}`), deduped by URL |
 | `GET /subtitles/series/tt0944947:1:1.json` | Subtitle tracks for a series episode |
@@ -187,6 +190,15 @@ queries addons that advertise a `subtitles` resource. They run the same pipeline
 dedupe them by URL. An optional Stremio extras segment (`/subtitles/<type>/<id>/<extras>.json`) is
 accepted and ignored. Subtitle routes are never rewritten through the media proxy, so tracks that
 require provider request headers may not load.
+
+### TMDB IDs
+
+With `TMDB_API_KEY` configured, `/manifest.json` advertises `idPrefixes: ["tt", "tmdb:"]` and
+`tmdb:<id>[:<season>[:<episode>]]` requests are accepted (`tmdb:550`, `tmdb:1399:1:1`). Providers are
+searched by title, so the addon fetches TMDB movie/TV details (including `external_ids`) to build
+Cinemeta-compatible metadata — title, year, episode list, and the IMDb ID when TMDB has one — and the
+IMDb ID is used for provider meta matching. Without a key, the manifest advertises `["tt"]` only and
+TMDB requests return `{"streams":[]}` without searching providers. TMDB lookups are cached for 6 h.
 
 ## Filters
 
@@ -267,7 +279,9 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `SETTINGS_FILE` | `<DATA_DIR>/provider-settings.json` | Provider settings file |
 | `PROVIDER_SETTINGS_JSON` | empty | Inline provider settings JSON; overrides the settings file |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `CINEMETA_URL` | `https://v3-cinemeta.strem.io` | Metadata endpoint |
+| `CINEMETA_URL` | `https://v3-cinemeta.strem.io` | Metadata endpoint for IMDb IDs |
+| `TMDB_API_KEY` | empty | TMDB v3 API key; required for `tmdb:` IDs and to advertise them in the manifest. Store it as the `TMDB_API_KEY` GitHub secret or inside `BEAMUP_EXTRA_ENV`, never commit it |
+| `TMDB_URL` | `https://api.themoviedb.org/3` | TMDB API base URL (for mirrors/proxies) |
 | `KV_FLUSH_MS` | `500` | KV/cookie write debounce |
 | `PROVIDER_CACHE_TTL_MS` | `21600000` | Search/mapping cache TTL |
 | `STREAM_CACHE_TTL_MS` | `60000` | Complete stream cache TTL |

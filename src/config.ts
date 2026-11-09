@@ -32,6 +32,8 @@ export interface AppConfig {
   providerSettingsJson: string | null;
   logLevel: LogLevel;
   cinemetaUrl: string;
+  tmdbApiKey: string | null;
+  tmdbUrl: string;
   kvFlushMs: number;
   providerCacheTtlMs: number;
   streamCacheTtlMs: number;
@@ -135,6 +137,8 @@ const schema = z.object({
   PROVIDER_SETTINGS_JSON: optionalString,
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   CINEMETA_URL: z.string().url().default("https://v3-cinemeta.strem.io"),
+  TMDB_API_KEY: optionalString,
+  TMDB_URL: z.string().url().default("https://api.themoviedb.org/3"),
   KV_FLUSH_MS: envInt(500, 0, 60000),
   PROVIDER_CACHE_TTL_MS: envInt(21600000, 1000, 604800000),
   STREAM_CACHE_TTL_MS: envInt(60000, 0, 3600000),
@@ -225,6 +229,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     providerSettingsJson: value.PROVIDER_SETTINGS_JSON,
     logLevel: value.LOG_LEVEL,
     cinemetaUrl: value.CINEMETA_URL.replace(/\/+$/, ""),
+    tmdbApiKey: value.TMDB_API_KEY,
+    tmdbUrl: value.TMDB_URL.replace(/\/+$/, ""),
     kvFlushMs: value.KV_FLUSH_MS,
     providerCacheTtlMs: value.PROVIDER_CACHE_TTL_MS,
     streamCacheTtlMs: value.STREAM_CACHE_TTL_MS,

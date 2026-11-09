@@ -17,6 +17,7 @@ import type {
   StremioStream,
   StremioSubtitle,
 } from "../types.js";
+import { contentIdOf, requestLogFields } from "../addon/parseId.js";
 import { TtlCache } from "../util/cache.js";
 import {
   mapLimit,
@@ -49,6 +50,8 @@ interface Candidate {
 
 interface RequestInfo {
   request: StreamRequest;
+  contentId: string;
+  imdbId: string | null;
   meta: CinemetaMeta | null;
   title: string;
   year: string | number | null;
@@ -137,9 +140,17 @@ function parseRequest(value: unknown): StreamRequest | null {
   if (!value || typeof value !== "object") return null;
   const request = value as Record<string, unknown>;
   if (request.type !== "movie" && request.type !== "series") return null;
-  if (typeof request.imdbId !== "string" || !/^tt\d{7,10}$/.test(request.imdbId)) {
-    return null;
-  }
+
+  const imdbId = typeof request.imdbId === "string" ? request.imdbId : null;
+  const tmdbId =
+    typeof request.tmdbId === "number" &&
+    Number.isSafeInteger(request.tmdbId) &&
+    request.tmdbId > 0
+      ? request.tmdbId
+      : null;
+  if ((imdbId === null) === (tmdbId === null)) return null;
+  if (imdbId !== null && !/^tt\d{7,10}$/.test(imdbId)) return null;
+
   const providers = parseProviderList(request.providers);
   const disabledProviders = parseProviderList(request.disabledProviders);
 
@@ -147,7 +158,7 @@ function parseRequest(value: unknown): StreamRequest | null {
     if (request.season !== undefined || request.episode !== undefined) return null;
     return {
       type: "movie",
-      imdbId: request.imdbId,
+      ...(imdbId !== null ? { imdbId } : { tmdbId: tmdbId! }),
       ...(providers ? { providers } : {}),
       ...(disabledProviders ? { disabledProviders } : {}),
     };
@@ -174,7 +185,7 @@ function parseRequest(value: unknown): StreamRequest | null {
 
   return {
     type: "series",
-    imdbId: request.imdbId,
+    ...(imdbId !== null ? { imdbId } : { tmdbId: tmdbId! }),
     season: request.season,
     ...(request.episode !== undefined ? { episode: request.episode } : {}),
     ...(providers ? { providers } : {}),
@@ -265,6 +276,7 @@ export class StreamPipeline implements StreamHandlerApi {
   private readonly logger: LoggerLike;
   private readonly registry: PipelineDeps["registry"];
   private readonly cinemeta: PipelineDeps["cinemeta"];
+  private readonly tmdb: PipelineDeps["tmdb"];
   private readonly disabledProviders: Set<string>;
 
   private readonly searchCache: TtlCache<string, Post[]>;
@@ -291,6 +303,7 @@ export class StreamPipeline implements StreamHandlerApi {
     this.logger = deps.logger;
     this.registry = deps.registry;
     this.cinemeta = deps.cinemeta;
+    this.tmdb = deps.tmdb ?? null;
     this.disabledProviders = new Set(
       deps.config.disabledProviders.map((value) => value.toLowerCase()),
     );
@@ -480,7 +493,7 @@ export class StreamPipeline implements StreamHandlerApi {
         .finally(() => {
           if (ctx.stopped) {
             this.logger.debug("pipeline.late_finish", {
-              imdbId: parsed.imdbId,
+              ...requestLogFields(parsed),
               type: parsed.type,
               durationMs: Date.now() - startedAt,
             });
@@ -533,7 +546,7 @@ export class StreamPipeline implements StreamHandlerApi {
     const disabled = request.disabledProviders
       ? request.disabledProviders.map((value) => value.toLowerCase()).sort().join(",")
       : "";
-    return `${request.type}|${request.imdbId}|${request.season ?? ""}|${request.episode ?? ""}|${providers}|${disabled}`;
+    return `${request.type}|${contentIdOf(request)}|${request.season ?? ""}|${request.episode ?? ""}|${providers}|${disabled}`;
   }
 
   private startSettleTimer(
@@ -571,6 +584,7 @@ export class StreamPipeline implements StreamHandlerApi {
     deadlineAt: number,
     callerSignal?: AbortSignal,
   ): Promise<RequestInfo | null> {
+    const contentId = contentIdOf(request);
     let meta: CinemetaMeta | null = null;
     const signal = callerSignal
       ? AbortSignal.any([callerSignal, controller.signal])
@@ -578,10 +592,21 @@ export class StreamPipeline implements StreamHandlerApi {
     const timeoutMs = Math.max(1, deadlineAt - Date.now());
 
     try {
+      const loadMeta = (): Promise<CinemetaMeta | null> => {
+        if ("imdbId" in request) {
+          return this.cinemeta.getMeta(request.type, request.imdbId);
+        }
+        if (!this.tmdb) return Promise.resolve(null);
+        return this.tmdb.getMeta(
+          request.type,
+          request.tmdbId,
+          request.type === "series" ? request.season : undefined,
+        );
+      };
       const metaPromise = withTimeout(
-        Promise.resolve().then(() => this.cinemeta.getMeta(request.type, request.imdbId)),
+        Promise.resolve().then(loadMeta),
         timeoutMs,
-        "cinemeta",
+        "metadata",
       );
       if (callerSignal) {
         const aborted = new Promise<{ kind: "aborted" }>((resolve) => {
@@ -604,8 +629,8 @@ export class StreamPipeline implements StreamHandlerApi {
       }
     } catch (error) {
       if (!callerSignal?.aborted) {
-        this.logger.debug("pipeline.cinemeta_failed", {
-          imdbId: request.imdbId,
+        this.logger.debug("pipeline.metadata_failed", {
+          contentId,
           type: request.type,
           error: errorName(error),
         });
@@ -613,6 +638,23 @@ export class StreamPipeline implements StreamHandlerApi {
     }
 
     if (signal.aborted) return null;
+
+    if (!("imdbId" in request) && !meta) {
+      this.logger.debug("pipeline.tmdb_meta_missing", {
+        contentId,
+        type: request.type,
+        configured: Boolean(this.tmdb),
+      });
+      return null;
+    }
+
+    const metaImdbId = trimString(meta?.id);
+    const resolvedImdbId =
+      "imdbId" in request
+        ? request.imdbId
+        : /^tt\d{7,10}$/.test(metaImdbId)
+          ? metaImdbId
+          : null;
 
     const title = trimString(meta?.name);
     const year = meta ? extractMetaYear(meta) : null;
@@ -635,7 +677,7 @@ export class StreamPipeline implements StreamHandlerApi {
     ) {
       baseTitles.push(originalName);
     }
-    if (baseTitles.length === 0) addVariant(request.imdbId);
+    if (baseTitles.length === 0) addVariant(resolvedImdbId ?? contentId);
 
     const season = request.type === "series" ? request.season ?? 0 : 0;
     const yearText = formatYearForQuery(year);
@@ -665,6 +707,8 @@ export class StreamPipeline implements StreamHandlerApi {
     if (request.type === "series") {
       return {
         request,
+        contentId,
+        imdbId: resolvedImdbId,
         meta,
         title,
         year,
@@ -680,6 +724,8 @@ export class StreamPipeline implements StreamHandlerApi {
 
     return {
       request,
+      contentId,
+      imdbId: resolvedImdbId,
       meta,
       title,
       year,
@@ -784,7 +830,7 @@ export class StreamPipeline implements StreamHandlerApi {
         this.logger.warn("pipeline.provider_no_streams", {
           provider: providerValue,
           stage: "stream",
-          imdbId: ctx.info.request.imdbId,
+          ...requestLogFields(ctx.info.request),
         });
         return;
       }
@@ -875,7 +921,7 @@ export class StreamPipeline implements StreamHandlerApi {
     ctx: InternalContext,
   ): Promise<{ candidate: Candidate | null; failed: boolean }> {
     const providerValue = trimString(bundle.entry.value);
-    const cacheKey = `${providerValue}|${ctx.info.request.imdbId}|${ctx.info.request.type}`;
+    const cacheKey = `${providerValue}|${ctx.info.contentId}|${ctx.info.request.type}`;
     const cached = this.mappingCache.get(cacheKey);
     if (cached) return { candidate: cached, failed: false };
 
@@ -915,8 +961,8 @@ export class StreamPipeline implements StreamHandlerApi {
     if (!meta || typeof meta !== "object") return false;
 
     const metaImdbId = trimString(meta.imdbId);
-    if (metaImdbId) {
-      return metaImdbId.toLowerCase() === info.request.imdbId.toLowerCase();
+    if (metaImdbId && info.imdbId) {
+      return metaImdbId.toLowerCase() === info.imdbId.toLowerCase();
     }
 
     if (!providerTypeMatches(meta.type, info.request.type)) return false;

@@ -3,6 +3,7 @@ import { configWarnings, loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import { createRuntime } from "./runtime.js";
 import { CinemetaClient } from "./cinemeta/client.js";
+import { TmdbClient } from "./tmdb/client.js";
 import { StreamPipeline } from "./pipeline/streamHandler.js";
 import { createApp } from "./addon/routes.js";
 import { nativeFetch } from "./util/nativeFetch.js";
@@ -27,11 +28,21 @@ async function main(): Promise<void> {
     fetchImpl: nativeFetch,
     timeoutMs: config.httpTimeoutMs,
   });
+  const tmdb = config.tmdbApiKey
+    ? new TmdbClient({
+        apiKey: config.tmdbApiKey,
+        baseUrl: config.tmdbUrl,
+        logger,
+        fetchImpl: nativeFetch,
+        timeoutMs: config.httpTimeoutMs,
+      })
+    : null;
   const pipeline = new StreamPipeline({
     config,
     logger,
     registry: runtime.registry,
     cinemeta,
+    tmdb,
   });
 
   let shuttingDown = false;

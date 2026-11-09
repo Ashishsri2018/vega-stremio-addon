@@ -152,4 +152,11 @@ jobs:
         env:
           BEAMUP_REMOTE: ${{ secrets.BEAMUP_REMOTE }}
           BEAMUP_EXTRA_ENV: ${{ secrets.BEAMUP_EXTRA_ENV }}
-        run: ./scripts/apply-beamup-env.sh
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TMDB_API_KEY:-}" ]; then
+            BEAMUP_EXTRA_ENV="${BEAMUP_EXTRA_ENV:+$BEAMUP_EXTRA_ENV$'\n'}TMDB_API_KEY=$TMDB_API_KEY"
+            export BEAMUP_EXTRA_ENV
+          fi
+          ./scripts/apply-beamup-env.sh

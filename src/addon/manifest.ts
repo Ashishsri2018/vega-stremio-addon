@@ -3,7 +3,9 @@ import type { StremioManifest } from "../types.js";
 export const ADDON_ID = "community.vega.stremio";
 export const ADDON_VERSION = "1.0.0";
 
-export function getManifest(): StremioManifest {
+export function getManifest(
+  options: { tmdbEnabled?: boolean } = {},
+): StremioManifest {
   return {
     id: ADDON_ID,
     version: ADDON_VERSION,
@@ -11,7 +13,7 @@ export function getManifest(): StremioManifest {
     description: "Streams from Vega providers",
     types: ["movie", "series"],
     resources: ["stream", "subtitles"],
-    idPrefixes: ["tt"],
+    idPrefixes: options.tmdbEnabled ? ["tt", "tmdb:"] : ["tt"],
     catalogs: [],
     behaviorHints: { configurable: true },
   };

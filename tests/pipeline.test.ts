@@ -4,6 +4,7 @@ import type {
   CinemetaApi,
   CinemetaMeta,
   LoggerLike,
+  MediaType,
   Post,
   ProviderBundle,
   ProviderContextLike,
@@ -12,6 +13,7 @@ import type {
   ProviderSnapshot,
   ProviderStream,
   StreamRequest,
+  TmdbApi,
 } from "../src/types.js";
 import { StreamPipeline } from "../src/pipeline/streamHandler.js";
 
@@ -89,6 +91,18 @@ function makeRegistry(bundles: ProviderBundle[]): {
 
 function makeCinemeta(meta: CinemetaMeta | null): CinemetaApi {
   return { getMeta: async () => meta };
+}
+
+function makeTmdb(
+  meta: CinemetaMeta | null,
+  calls: Array<[MediaType, number, number | undefined]> = [],
+): TmdbApi {
+  return {
+    getMeta: async (type, tmdbId, season) => {
+      calls.push([type, tmdbId, season]);
+      return meta;
+    },
+  };
 }
 
 function movieProvider(options: {
@@ -260,6 +274,112 @@ describe("StreamPipeline movie flow", () => {
     const streams = await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
     expect(streams).toHaveLength(1);
     expect(streams[0].url).toBe("https://cdn.test/debrid.mkv");
+  });
+});
+
+describe("StreamPipeline TMDB flow", () => {
+  it("resolves tmdb movies through TMDB metadata without calling Cinemeta", async () => {
+    const provider = movieProvider({
+      value: "alpha",
+      url: "https://alpha.test/tmdb.mp4",
+      quality: "1080p",
+    });
+    const { registry } = makeRegistry([provider]);
+    const cinemetaCalls: Array<[string, string]> = [];
+    const cinemeta: CinemetaApi = {
+      getMeta: async (type, imdbId) => {
+        cinemetaCalls.push([type, imdbId]);
+        return movieMeta;
+      },
+    };
+    const tmdbCalls: Array<[MediaType, number, number | undefined]> = [];
+    const tmdb = makeTmdb({ ...movieMeta, name: "The Shawshank Redemption" }, tmdbCalls);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta,
+      tmdb,
+    });
+
+    const streams = await pipeline.handle({ type: "movie", tmdbId: 550 });
+
+    expect(tmdbCalls).toEqual([["movie", 550, undefined]]);
+    expect(cinemetaCalls).toEqual([]);
+    expect(streams.map((stream) => stream.url)).toEqual([
+      "https://alpha.test/tmdb.mp4",
+    ]);
+  });
+
+  it("passes the season to TMDB and matches providers by the resolved IMDb id", async () => {
+    const getEpisodes = vi.fn(async () => [
+      { title: "Pilot", link: "https://series.test/pilot" },
+    ]);
+    const bundle = seriesBundle({
+      meta: {
+        title: "Breaking Bad",
+        imdbId: "tt0903747",
+        type: "series",
+        linkList: [{ title: "S01E01", episodesLink: "https://series.test/episodes" }],
+      },
+      episodes: { getEpisodes },
+      stream: {
+        getStream: async ({ link }) => [
+          { server: "Series Server", link, quality: "1080p" },
+        ],
+      },
+    });
+    const { registry } = makeRegistry([bundle]);
+    const tmdbCalls: Array<[MediaType, number, number | undefined]> = [];
+    const tmdb = makeTmdb(
+      { ...seriesMeta, id: "tt0903747", name: "Breaking Bad" },
+      tmdbCalls,
+    );
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(null),
+      tmdb,
+    });
+
+    const streams = await pipeline.handle({
+      type: "series",
+      tmdbId: 1396,
+      season: 1,
+      episode: 1,
+    });
+
+    expect(tmdbCalls).toEqual([["series", 1396, 1]]);
+    expect(streams.map((stream) => stream.url)).toEqual([
+      "https://series.test/pilot",
+    ]);
+  });
+
+  it("returns nothing without searching providers when no TMDB client is configured", async () => {
+    const getSearchPosts = vi.fn(async () => []);
+    const bundle = makeBundle("alpha", "Alpha", {
+      posts: { getSearchPosts },
+    });
+    const { registry } = makeRegistry([bundle]);
+    const cinemetaCalls: string[] = [];
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: {
+        getMeta: async (type, imdbId) => {
+          cinemetaCalls.push(`${type}:${imdbId}`);
+          return movieMeta;
+        },
+      },
+    });
+
+    const streams = await pipeline.handle({ type: "movie", tmdbId: 550 });
+
+    expect(streams).toEqual([]);
+    expect(getSearchPosts).not.toHaveBeenCalled();
+    expect(cinemetaCalls).toEqual([]);
   });
 });
 
@@ -703,6 +823,14 @@ describe("StreamPipeline limits, cache and validation", () => {
       { type: "movie", imdbId: "tt0111161", season: 1 },
       { type: "series", imdbId: "tt0903747", season: -1 },
       { type: "series", imdbId: "tt0903747", season: 1, episode: 1.5 },
+      { type: "movie", tmdbId: 0 },
+      { type: "movie", tmdbId: -5 },
+      { type: "movie", tmdbId: 1.5 },
+      { type: "movie", tmdbId: 550, season: 1 },
+      { type: "movie", tmdbId: 550, episode: 1 },
+      { type: "series", tmdbId: 1399 },
+      { type: "series", tmdbId: 1399, season: 1, episode: 1.5 },
+      { type: "movie", imdbId: "tt0111161", tmdbId: 550 } as StreamRequest,
     ];
     for (const request of invalid) {
       await expect(pipeline.handle(request)).resolves.toEqual([]);

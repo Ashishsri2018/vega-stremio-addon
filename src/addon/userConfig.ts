@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { inferFileSizeBytes, inferQuality } from "../pipeline/mapStreams.js";
-import type { StremioStream } from "../types.js";
+import type { StremioStream, StremioSubtitle } from "../types.js";
 
 const USER_CONFIG_VERSION = 1;
 const MAX_SUBTITLE_LANGS = 20;
@@ -185,4 +185,13 @@ export function filterStreams(
 
   if (!filterSubs) return result;
   return result.map((stream) => filterSubtitles(stream, subtitleLangs));
+}
+
+export function filterSubtitleTracks(
+  subtitles: StremioSubtitle[],
+  config: UserConfig,
+): StremioSubtitle[] {
+  const subtitleLangs = normalizeSubtitleLangs(config.subtitleLangs);
+  if (subtitleLangs.length === 0) return subtitles;
+  return subtitles.filter((track) => languageMatches(track.lang, subtitleLangs));
 }

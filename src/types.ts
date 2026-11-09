@@ -413,6 +413,7 @@ export interface PipelineMetrics {
 
 export interface StreamHandlerApi {
   handle(request: StreamRequest, signal?: AbortSignal): Promise<StremioStream[]>;
+  collectSubtitles?(request: StreamRequest, signal?: AbortSignal): Promise<StremioSubtitle[]>;
   getMetrics?(): PipelineMetrics;
 }
 

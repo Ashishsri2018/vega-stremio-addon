@@ -11,6 +11,7 @@ import type {
   AddonRoutesDeps,
   HealthReport,
   StremioStream,
+  StremioSubtitle,
 } from "../types.js";
 import { createProxyHandler } from "../proxy/server.js";
 import { createProxyToken } from "../proxy/sign.js";
@@ -18,7 +19,7 @@ import { renderConfigurePage } from "./configure.js";
 import { getManifest } from "./manifest.js";
 import { parseStreamId } from "./parseId.js";
 import { RateLimiter } from "./rateLimit.js";
-import { filterStreams, parseUserConfig } from "./userConfig.js";
+import { filterStreams, filterSubtitleTracks, parseUserConfig } from "./userConfig.js";
 
 const SLOW_REQUEST_MS = 2000;
 const RATE_LIMIT_RETRY_AFTER_SECONDS = 30;
@@ -204,6 +205,124 @@ function createStreamHandler(
   };
 }
 
+async function runSubtitleRequest(
+  req: Request,
+  res: Response,
+  deps: AddonRoutesDeps,
+  limiter: RateLimiter,
+): Promise<void> {
+  res.setHeader("Cache-Control", "no-store");
+
+  if (req.method === "HEAD") {
+    res.status(200).end();
+    return;
+  }
+
+  const requestId = requestIdOf(res);
+  const startedAt = Date.now();
+  let outcome: "ok" | "empty" | "invalid_id" | "error" | "client_aborted" | "rate_limited" =
+    "ok";
+  // The path* capture holds `<id>.json` plus Stremio's optional extras segment.
+  const rawId = Array.isArray(req.params.path) ? req.params.path[0] : req.params.path;
+  const request = parseStreamId(req.params.type ?? "", rawId ?? "");
+  let subtitleCount = 0;
+
+  const release = acquireRelease(req, res, limiter);
+  if (!release) {
+    outcome = "rate_limited";
+    res.setHeader("Retry-After", String(RATE_LIMIT_RETRY_AFTER_SECONDS));
+    res.status(200).json({ subtitles: [] });
+    deps.logger.debug("pipeline.subtitle_summary", {
+      requestId,
+      outcome,
+      durationMs: Date.now() - startedAt,
+    });
+    return;
+  }
+
+  const userConfig = parseUserConfig(req.params.config);
+
+  if (!request || !deps.pipeline.collectSubtitles) {
+    outcome = request ? "error" : "invalid_id";
+    res.status(200).json({ subtitles: [] });
+  } else {
+    const pipelineRequest =
+      userConfig.providers.length > 0 || userConfig.disabledProviders.length > 0
+        ? {
+            ...request,
+            providers: userConfig.providers,
+            disabledProviders: userConfig.disabledProviders,
+          }
+        : request;
+
+    const controller = new AbortController();
+    const onClose = (): void => {
+      if (!res.writableEnded) controller.abort();
+    };
+    res.once("close", onClose);
+
+    let subtitles: StremioSubtitle[] = [];
+    try {
+      const result = await deps.pipeline.collectSubtitles(
+        pipelineRequest,
+        controller.signal,
+      );
+      subtitles = Array.isArray(result) ? result : [];
+    } catch (error) {
+      outcome = "error";
+      deps.logger.error("subtitle_request_failed", {
+        requestId,
+        type: request.type,
+        imdbId: request.imdbId,
+        season: request.season,
+        episode: request.episode,
+        reason: error instanceof Error ? error.name : "unknown",
+      });
+      subtitles = [];
+    } finally {
+      res.off("close", onClose);
+    }
+
+    if (controller.signal.aborted && !res.writableEnded) outcome = "client_aborted";
+
+    subtitles = filterSubtitleTracks(subtitles, userConfig);
+    subtitleCount = subtitles.length;
+
+    if (!res.writableEnded && !res.destroyed) {
+      res.status(200).json({ subtitles });
+      if (outcome === "ok" && subtitles.length === 0) outcome = "empty";
+    }
+  }
+
+  release();
+
+  const durationMs = Date.now() - startedAt;
+  const fields = {
+    requestId,
+    type: request?.type ?? null,
+    imdbId: request?.imdbId ?? null,
+    season: request?.season ?? null,
+    episode: request?.episode ?? null,
+    subtitleCount,
+    durationMs,
+    outcome,
+  };
+  if (outcome === "error" || durationMs >= SLOW_REQUEST_MS) {
+    deps.logger.info("pipeline.subtitle_summary", fields);
+  } else {
+    deps.logger.debug("pipeline.subtitle_summary", fields);
+  }
+}
+
+function createSubtitleHandler(
+  deps: AddonRoutesDeps,
+  limiter: RateLimiter,
+): RequestHandler {
+  return (req, res): void => {
+    void runSubtitleRequest(req, res, deps, limiter);
+  };
+}
+
 export function createApp(deps: AddonRoutesDeps): express.Express {
   const app = express();
   app.disable("x-powered-by");
@@ -265,9 +384,11 @@ export function createApp(deps: AddonRoutesDeps): express.Express {
     maxConcurrent: deps.config.streamMaxConcurrent,
   });
   const streamHandler = createStreamHandler(deps, streamLimiter);
+  const subtitleHandler = createSubtitleHandler(deps, streamLimiter);
   for (const prefix of ["", "/:config"]) {
     app.get(`${prefix}/stream/:type/:id.json`, streamHandler);
     app.get(`${prefix}/stream/:type/:id`, streamHandler);
+    app.get(`${prefix}/subtitles/:type/:path*`, subtitleHandler);
   }
 
   if (deps.config.proxyEnabled && deps.config.proxySecret) {

@@ -10,7 +10,7 @@ export function getManifest(): StremioManifest {
     name: "Vega Streams",
     description: "Streams from Vega providers",
     types: ["movie", "series"],
-    resources: ["stream"],
+    resources: ["stream", "subtitles"],
     idPrefixes: ["tt"],
     catalogs: [],
     behaviorHints: { configurable: true },

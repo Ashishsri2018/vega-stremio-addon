@@ -603,6 +603,55 @@ describe("StreamPipeline limits, cache and validation", () => {
     ).resolves.toHaveLength(200);
   });
 
+  it("collectSubtitles aggregates and dedupes provider tracks from the stream cache", async () => {
+    const getSearchPosts = vi.fn(async () => [
+      { title: "The Shawshank Redemption 1994", link: "https://subs.test/post" },
+    ]);
+    const shared = { uri: "https://subs.test/shared.vtt", language: "English" };
+    const bundle = movieProvider({
+      value: "subs",
+      url: "https://subs.test/1080.mp4",
+      stream: {
+        getStream: async () => [
+          {
+            server: "Subs",
+            link: "https://subs.test/1080.mp4",
+            quality: "1080p",
+            subtitles: [shared, { uri: "https://subs.test/hi.vtt", language: "Hindi" }],
+          },
+          {
+            server: "Subs",
+            link: "https://subs.test/720.mp4",
+            quality: "720p",
+            subtitles: [shared, { uri: "https://subs.test/ja.vtt", language: "Japanese" }],
+          },
+        ],
+      },
+    });
+    bundle.modules.posts = { getSearchPosts };
+    const { registry } = makeRegistry([bundle]);
+    const pipeline = new StreamPipeline({
+      config: testConfig(),
+      logger: testLogger(),
+      registry,
+      cinemeta: makeCinemeta(movieMeta),
+    });
+
+    const subtitles = await pipeline.collectSubtitles({
+      type: "movie",
+      imdbId: "tt0111161",
+    });
+    expect(subtitles.map((track) => track.url)).toEqual([
+      "https://subs.test/shared.vtt",
+      "https://subs.test/hi.vtt",
+      "https://subs.test/ja.vtt",
+    ]);
+    expect(subtitles.map((track) => track.lang)).toEqual(["english", "hindi", "japanese"]);
+
+    await pipeline.handle({ type: "movie", imdbId: "tt0111161" });
+    expect(getSearchPosts).toHaveBeenCalledTimes(1);
+  });
+
   it("caches streams until provider activation clears caches", async () => {
     const getSearchPosts = vi.fn(async () => [
       { title: "The Shawshank Redemption 1994", link: "https://cache.test/post" },

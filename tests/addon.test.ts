@@ -14,6 +14,7 @@ import type {
   HealthReport,
   LoggerLike,
   StremioStream,
+  StremioSubtitle,
   StreamHandlerApi,
   StreamRequest,
 } from "../src/types.js";
@@ -116,7 +117,7 @@ describe("manifest", () => {
       name: "Vega Streams",
       description: "Streams from Vega providers",
       types: ["movie", "series"],
-      resources: ["stream"],
+      resources: ["stream", "subtitles"],
       idPrefixes: ["tt"],
       catalogs: [],
       behaviorHints: { configurable: true },
@@ -763,6 +764,124 @@ describe("rate limiting", () => {
     const second = await nativeFetch(`${base}/proxy/not-a-token`);
     expect(second.status).toBe(429);
     expect(second.headers.get("retry-after")).toBe("30");
+  });
+});
+
+describe("subtitle routes", () => {
+  function makeSubtitlePipeline(
+    tracks: StremioSubtitle[] = [
+      { id: "p-0", url: "https://cdn.example.com/en.vtt", lang: "en" },
+      { id: "p-0-1", url: "https://cdn.example.com/hi.vtt", lang: "hi" },
+    ],
+  ) {
+    const requests: StreamRequest[] = [];
+    const collectSubtitles = vi.fn(
+      async (request: StreamRequest, signal?: AbortSignal) => {
+        expect(signal).toBeInstanceOf(AbortSignal);
+        requests.push(request);
+        return tracks;
+      },
+    );
+    const pipeline: StreamHandlerApi = {
+      handle: vi.fn(async () => []),
+      collectSubtitles,
+    };
+    return { pipeline, requests, collectSubtitles };
+  }
+
+  it("aggregates subtitle tracks for movie and series requests", async () => {
+    const { pipeline, requests } = makeSubtitlePipeline();
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+
+    const movie = await nativeFetch(`${base}/subtitles/movie/tt0111161.json`);
+    expect(movie.status).toBe(200);
+    expect(movie.headers.get("cache-control")).toBe("no-store");
+    expect(await movie.json()).toEqual({
+      subtitles: [
+        { id: "p-0", url: "https://cdn.example.com/en.vtt", lang: "en" },
+        { id: "p-0-1", url: "https://cdn.example.com/hi.vtt", lang: "hi" },
+      ],
+    });
+
+    const series = await nativeFetch(`${base}/subtitles/series/tt0944947:1:2.json`);
+    expect(series.status).toBe(200);
+    expect(requests).toEqual([
+      { type: "movie", imdbId: "tt0111161" },
+      { type: "series", imdbId: "tt0944947", season: 1, episode: 2 },
+    ]);
+  });
+
+  it("ignores the Stremio extras segment and applies config filters", async () => {
+    const { pipeline, requests } = makeSubtitlePipeline();
+    const base = await startApp(createApp(makeDeps({ pipeline })));
+
+    const extras = await nativeFetch(
+      `${base}/subtitles/movie/tt0111161/videoHash=abc&filename=x.mkv.json`,
+    );
+    expect(extras.status).toBe(200);
+    expect(((await extras.json()) as { subtitles: unknown[] }).subtitles).toHaveLength(2);
+
+    const segment = encodeUserConfig({
+      maxRes: null,
+      minRes: null,
+      includeUnknown: true,
+      maxSizeMB: null,
+      includeUnknownSize: true,
+      subtitleLangs: ["hi"],
+    });
+    const filtered = await nativeFetch(
+      `${base}/${segment}/subtitles/movie/tt0111161.json`,
+    );
+    expect(filtered.status).toBe(200);
+    expect(await filtered.json()).toEqual({
+      subtitles: [{ id: "p-0-1", url: "https://cdn.example.com/hi.vtt", lang: "hi" }],
+    });
+    expect(requests).toHaveLength(2);
+  });
+
+  it("returns an empty track list for invalid ids, failures, and HEAD", async () => {
+    const { pipeline, collectSubtitles } = makeSubtitlePipeline();
+    const errors: string[] = [];
+    const base = await startApp(
+      createApp(makeDeps({ pipeline, logger: makeLogger(errors) })),
+    );
+
+    for (const path of [
+      "/subtitles/movie/not-an-imdb-id.json",
+      "/subtitles/movie/tt0111161:1:1.json",
+      "/subtitles/series/tt0944947.json",
+      "/subtitles/anime/tt0944947:1:1.json",
+    ]) {
+      const response = await nativeFetch(`${base}${path}`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ subtitles: [] });
+    }
+    expect(collectSubtitles).not.toHaveBeenCalled();
+
+    const failing = makeSubtitlePipeline();
+    failing.collectSubtitles.mockRejectedValueOnce(new Error("provider exploded"));
+    const failingBase = await startApp(
+      createApp(makeDeps({ pipeline: failing.pipeline, logger: makeLogger(errors) })),
+    );
+    const broken = await nativeFetch(`${failingBase}/subtitles/movie/tt0111161.json`);
+    expect(broken.status).toBe(200);
+    expect(await broken.json()).toEqual({ subtitles: [] });
+    expect(errors).toContain("subtitle_request_failed");
+
+    const head = await nativeFetch(`${base}/subtitles/movie/tt0111161.json`, {
+      method: "HEAD",
+    });
+    expect(head.status).toBe(200);
+    expect(collectSubtitles).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty track list when the pipeline lacks subtitle support", async () => {
+    const base = await startApp(
+      createApp(makeDeps({ pipeline: { handle: vi.fn(async () => []) } })),
+    );
+    const response = await nativeFetch(`${base}/subtitles/movie/tt0111161.json`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ subtitles: [] });
   });
 });
 

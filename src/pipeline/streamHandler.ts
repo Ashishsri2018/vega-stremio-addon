@@ -15,6 +15,7 @@ import type {
   StreamHandlerApi,
   StreamRequest,
   StremioStream,
+  StremioSubtitle,
 } from "../types.js";
 import { TtlCache } from "../util/cache.js";
 import {
@@ -364,6 +365,23 @@ export class StreamPipeline implements StreamHandlerApi {
         entry.controller.abort(new Error("all callers aborted"));
       }
     }
+  }
+
+  async collectSubtitles(
+    request: StreamRequest,
+    signal?: AbortSignal,
+  ): Promise<StremioSubtitle[]> {
+    const streams = await this.handle(request, signal);
+    const seenUrls = new Set<string>();
+    const subtitles: StremioSubtitle[] = [];
+    for (const stream of streams) {
+      for (const track of stream.subtitles ?? []) {
+        if (seenUrls.has(track.url)) continue;
+        seenUrls.add(track.url);
+        subtitles.push(track);
+      }
+    }
+    return subtitles;
   }
 
   private awaitShared(

@@ -198,3 +198,17 @@ toggle is cleared.
 - `deploy/beamup.env` disables `SETTLE_MS` and `EMPTY_FENCE_MS`, so uncached requests use the full
   10 s global budget before returning.
 - Docs and tests updated (`README.md`, `architecture.md`, `AGENTS.md`, `tests/pipeline.test.ts`).
+
+## 2026-11-08 - Subtitles resource for Nuvio Mobile
+
+- Manifest now advertises `resources: ["stream", "subtitles"]`; added `GET /subtitles/:type/:path*`
+  and `GET /:config/subtitles/:type/:path*` (`src/addon/routes.ts`). `:path*` absorbs the optional
+  Stremio extras segment because Express 4 routes have no optional-param groups.
+- `StreamPipeline.collectSubtitles()` reuses `handle()`, so subtitle requests share the stream cache,
+  in-flight fan-out, deadlines, breakers, and rate limit; it flattens `stream.subtitles` and dedupes
+  by URL. Config segments apply only `subtitleLangs` (`filterSubtitleTracks` in `userConfig.ts`).
+- Subtitle track URLs are not rewritten through the media proxy; tracks needing provider headers may
+  not load.
+- Verified locally with `deploy/beamup.env` settings: `tt0111161` returned 44 tracks in ~10 s (the
+  global deadline), extras path was a cache hit, the following stream request was a cache hit; all
+  304 tests pass. Beamup redeploys via CI on push.

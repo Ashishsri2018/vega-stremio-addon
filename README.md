@@ -8,7 +8,7 @@ Self-hosted Stremio addon that serves movie and series streams from the 39 enabl
 - Upstream is checked every 4-6 hours and new provider bundles are hot-swapped without a restart.
 - Direct links are returned with the HTTP headers players need; an optional signed proxy is included.
 - Per-user filters (resolution, file size, subtitle languages) are encoded in the add-on URL; nothing is stored server-side.
-- No admin HTTP API. Only `/configure`, `/manifest.json`, `/stream/...`, `/health`, and (when enabled)
+- No admin HTTP API. Only `/configure`, `/manifest.json`, `/stream/...`, `/subtitles/...`, `/health`, and (when enabled)
   `/proxy/...`.
 
 ## Quick start
@@ -168,12 +168,22 @@ Beamup notes:
 | `GET /stream/series/tt0944947:1:1.json` | Series episode streams |
 | `GET /stream/series/tt0944947:1.json` | Season requests (packs and episodes) |
 | `GET /<config>/stream/...` | Streams filtered by the config segment |
+| `GET /subtitles/movie/tt0111161.json` | Provider subtitle tracks (`{id, url, lang}`), deduped by URL |
+| `GET /subtitles/series/tt0944947:1:1.json` | Subtitle tracks for a series episode |
+| `GET /<config>/subtitles/...` | Subtitle tracks filtered by the config segment's subtitle languages |
 | `GET /health` | Minimal provider/update status (no secrets) |
 | `GET /proxy/<token>` | Signed media proxy (only when `PROXY_ENABLED=true`) |
 
 Addon routes always return HTTP 200 with JSON. Invalid IDs and provider failures produce
-`{"streams":[]}`. `/stream` and `/health` are `Cache-Control: no-store`. `/configure` is the only
-HTML route.
+`{"streams":[]}` (or `{"subtitles":[]}` on subtitle routes). `/stream`, `/subtitles`, and `/health`
+are `Cache-Control: no-store`. `/configure` is the only HTML route.
+
+Subtitle routes exist because Nuvio Mobile ignores subtitles embedded in stream objects and only
+queries addons that advertise a `subtitles` resource. They run the same pipeline request as
+`/stream` (sharing its stream cache, deadlines, and rate limit), then flatten the provider tracks and
+dedupe them by URL. An optional Stremio extras segment (`/subtitles/<type>/<id>/<extras>.json`) is
+accepted and ignored. Subtitle routes are never rewritten through the media proxy, so tracks that
+require provider request headers may not load.
 
 ## Filters
 

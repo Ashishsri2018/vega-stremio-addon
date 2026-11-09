@@ -16,7 +16,7 @@ import type {
 import { createProxyHandler } from "../proxy/server.js";
 import { createProxyToken } from "../proxy/sign.js";
 import { renderConfigurePage } from "./configure.js";
-import { getManifest } from "./manifest.js";
+import { ADDON_ID, getManifest } from "./manifest.js";
 import { parseStreamId } from "./parseId.js";
 import { RateLimiter } from "./rateLimit.js";
 import { filterStreams, filterSubtitleTracks, parseUserConfig } from "./userConfig.js";
@@ -361,6 +361,17 @@ export function createApp(deps: AddonRoutesDeps): express.Express {
       },
     }),
   );
+
+  const serveRoot: RequestHandler = (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({
+      addon: ADDON_ID,
+      manifest: "/manifest.json",
+      configure: "/configure",
+      health: "/health",
+    });
+  };
+  app.get("/", serveRoot);
 
   const serveManifest: RequestHandler = (req, res) => {
     res.setHeader("Cache-Control", "public, max-age=300");

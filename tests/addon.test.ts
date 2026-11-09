@@ -104,6 +104,25 @@ function makeDeps(overrides: Partial<AddonRoutesDeps> = {}): AddonRoutesDeps {
   };
 }
 
+describe("root", () => {
+  it("serves info JSON and answers HEAD without a body", async () => {
+    const base = await startApp(createApp(makeDeps()));
+    const response = await nativeFetch(`${base}/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      addon: ADDON_ID,
+      manifest: "/manifest.json",
+      configure: "/configure",
+      health: "/health",
+    });
+
+    const head = await nativeFetch(`${base}/`, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+  });
+});
+
 describe("manifest", () => {
   it("serves the exact stable manifest", async () => {
     const base = await startApp(createApp(makeDeps()));

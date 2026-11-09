@@ -212,3 +212,12 @@ toggle is cleared.
 - Verified locally with `deploy/beamup.env` settings: `tt0111161` returned 44 tracks in ~10 s (the
   global deadline), extras path was a cache hit, the following stream request was a cache hit; all
   304 tests pass. Beamup redeploys via CI on push.
+
+## 2026-11-09 - Root endpoint for uptime checks
+
+- Added `GET /` (info JSON with relative `manifest`/`configure`/`health` links, `no-store`) in
+  `src/addon/routes.ts`. The bare deployment URL previously returned a JSON 404 for every method, so
+  uptime pingers pointed at the root had nothing to hit.
+- Express answers `HEAD` on every GET route without a body; the new root route is covered by a
+  `tests/addon.test.ts` case for GET and HEAD.
+- Docs updated (`README.md`, `architecture.md`).

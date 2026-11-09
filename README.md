@@ -8,7 +8,7 @@ Self-hosted Stremio addon that serves movie and series streams from the 39 enabl
 - Upstream is checked every 4-6 hours and new provider bundles are hot-swapped without a restart.
 - Direct links are returned with the HTTP headers players need; an optional signed proxy is included.
 - Per-user filters (resolution, file size, subtitle languages) are encoded in the add-on URL; nothing is stored server-side.
-- No admin HTTP API. Only `/configure`, `/manifest.json`, `/stream/...`, `/subtitles/...`, `/health`, and (when enabled)
+- No admin HTTP API. Only `/`, `/configure`, `/manifest.json`, `/stream/...`, `/subtitles/...`, `/health`, and (when enabled)
   `/proxy/...`.
 
 ## Quick start
@@ -161,6 +161,7 @@ Beamup notes:
 
 | Route | Purpose |
 |---|---|
+| `GET /` | Info JSON (`addon`, `manifest`, `configure`, `health`) for uptime pingers |
 | `GET /configure` | Filter configuration page that builds the add-on URL |
 | `GET /manifest.json` | Stremio manifest (stable version across provider updates) |
 | `GET /<config>/manifest.json` | Manifest for a personalized (filtered) install |
@@ -175,8 +176,10 @@ Beamup notes:
 | `GET /proxy/<token>` | Signed media proxy (only when `PROXY_ENABLED=true`) |
 
 Addon routes always return HTTP 200 with JSON. Invalid IDs and provider failures produce
-`{"streams":[]}` (or `{"subtitles":[]}` on subtitle routes). `/stream`, `/subtitles`, and `/health`
-are `Cache-Control: no-store`. `/configure` is the only HTML route.
+`{"streams":[]}` (or `{"subtitles":[]}` on subtitle routes). `/`, `/stream`, `/subtitles`, and
+`/health` are `Cache-Control: no-store`. `/configure` is the only HTML route. Every GET route also
+answers `HEAD` with the same status and headers and no body, so uptime pingers such as UptimeRobot
+can monitor any endpoint.
 
 Subtitle routes exist because Nuvio Mobile ignores subtitles embedded in stream objects and only
 queries addons that advertise a `subtitles` resource. They run the same pipeline request as

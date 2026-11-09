@@ -8,7 +8,7 @@ executed in-process through a reimplemented provider SDK. There is no admin API 
 
 ```
 Stremio client
-   |  /manifest.json, /stream/:type/:id.json, /subtitles/:type/:id.json, /health, /proxy/:token
+   |  /, /manifest.json, /stream/:type/:id.json, /subtitles/:type/:id.json, /health, /proxy/:token
    v
 Express app (src/addon/routes.ts)
    |-- StreamPipeline (src/pipeline/streamHandler.ts)
@@ -102,10 +102,11 @@ The `/configure` page builds these URLs in the browser; no filter state is store
 
 ## HTTP surface
 
-`src/addon/routes.ts` adds permissive CORS, manifest, stream routes, subtitle routes, health, optional
-proxy, JSON 404s, and the HTML `/configure` page. Stream/subtitle/health responses are `no-store`;
-errors never leak stack traces or secrets. Health is built from persisted state plus the active
-registry, with no settings values or URLs.
+`src/addon/routes.ts` adds permissive CORS, a root info JSON, manifest, stream routes, subtitle
+routes, health, optional proxy, JSON 404s, and the HTML `/configure` page. Express answers `HEAD` on
+every GET route without a body. Root/stream/subtitle/health responses are `no-store`; errors never
+leak stack traces or secrets. Health is built from persisted state plus the active registry, with no
+settings values or URLs.
 
 Subtitle routes: `GET /subtitles/:type/:path*` and `GET /:config/subtitles/:type/:path*`. The
 `path*` capture holds `<id>.json` plus Stremio's optional extras segment, which `parseStreamId`

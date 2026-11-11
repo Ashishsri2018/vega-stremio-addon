@@ -86,7 +86,8 @@ Provider bundles expect a `providerContext` with axios, cheerio, browser headers
 8. A global deadline returns partial results; abandoned provider promises are aborted and cannot
    hold the response open.
 
-Caches (search 10m, mapping 6h, complete streams 60s, truncated/empty streams 30s) are
+Caches (search 10m, mapping 6h, complete streams 60s, truncated non-empty streams 30s; empty
+stream results are never cached) are
 in-memory and cleared on activation. Stream and mapping cache keys use a `contentId`
 (`tt...` or `tmdb:...`), so IMDb and TMDB requests for the same title do not collide; provider meta
 matching prefers IMDb IDs and falls back to title/year/type when TMDB has no IMDb ID.

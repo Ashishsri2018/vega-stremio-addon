@@ -502,9 +502,12 @@ export class StreamPipeline implements StreamHandlerApi {
 
       const result = await Promise.race([work, earlyPromise, abortPromise]);
 
-      if (!workSignal.aborted && this.generation === ctx.generation) {
-        const partial = ctx.truncated || result.length === 0;
-        const ttl = partial
+      if (
+        !workSignal.aborted &&
+        this.generation === ctx.generation &&
+        result.length > 0
+      ) {
+        const ttl = ctx.truncated
           ? Math.min(this.config.streamPartialCacheTtlMs, this.config.streamCacheTtlMs)
           : this.config.streamCacheTtlMs;
         this.streamCache.set(cacheKey, result.slice(), ttl);
@@ -895,7 +898,11 @@ export class StreamPipeline implements StreamHandlerApi {
                 post.link.trim().length > 0,
             )
           : [];
-        if (!ctx.stopped && this.generation === ctx.generation) {
+        if (
+          posts.length > 0 &&
+          !ctx.stopped &&
+          this.generation === ctx.generation
+        ) {
           this.searchCache.set(cacheKey, posts);
         }
         if (posts.length > 0) return posts;

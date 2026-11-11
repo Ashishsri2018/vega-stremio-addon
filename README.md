@@ -237,7 +237,7 @@ Both guards are disabled with `0`; the global deadline remains the absolute cap.
 deployment disables both to collect as much as possible within its 10 s budget. Results cut short
 by a settle/empty guard or the global deadline are cached for `STREAM_PARTIAL_CACHE_TTL_MS`
 (default `30000`), while naturally completed results use the longer `STREAM_CACHE_TTL_MS`. Empty
-results also use the partial TTL.
+results are never cached, so a retry always re-runs the providers.
 On Beamup, cold starts (30-60 s) dominate the first request; a keep-warm ping every ~10 minutes
 avoids most of that cost.
 
@@ -285,7 +285,7 @@ All settings are environment variables. Invalid values fail fast at startup.
 | `KV_FLUSH_MS` | `500` | KV/cookie write debounce |
 | `PROVIDER_CACHE_TTL_MS` | `21600000` | Search/mapping cache TTL |
 | `STREAM_CACHE_TTL_MS` | `60000` | Complete stream cache TTL |
-| `STREAM_PARTIAL_CACHE_TTL_MS` | `30000` | TTL for deadline/settle-truncated and empty stream results (`0` disables) |
+| `STREAM_PARTIAL_CACHE_TTL_MS` | `30000` | TTL for deadline/settle-truncated non-empty stream results (`0` disables) |
 
 The active Beamup deployment overrides some defaults in `deploy/beamup.env` (`SEARCH_CONCURRENCY=40`,
 `SEARCH_TIMEOUT_MS=5000`, `META_TIMEOUT_MS=8000`, `STREAM_TIMEOUT_MS=8000`,

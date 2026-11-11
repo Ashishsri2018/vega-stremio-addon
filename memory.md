@@ -274,3 +274,11 @@ toggle is cleared.
   `filterStreams` leaves streams and inline tracks untouched; `tests/addon.test.ts` now asserts the
   stream route keeps every inline track under a config segment.
 - Verified with `npm run typecheck && npm test && npm run build`.
+
+## 2026-11-11 - Cache parity: non-empty only, partial results at 30 s
+
+- Stream results are cached only when non-empty. Deadline/settle-truncated non-empty results use
+  `STREAM_PARTIAL_CACHE_TTL_MS` (default `30000`); complete results use `STREAM_CACHE_TTL_MS`.
+- The provider search cache no longer stores empty post lists, so an empty result always retries
+  instead of being negative-cached for `PROVIDER_CACHE_TTL_MS`.
+- Aligns Vega with Nuvio and SA7: empty stream results are never cached in any addon.

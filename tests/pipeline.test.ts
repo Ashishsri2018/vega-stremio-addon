@@ -994,7 +994,7 @@ describe("StreamPipeline caching and coalescing", () => {
     pipeline.dispose();
   });
 
-  it("uses the partial TTL for empty results", async () => {
+  it("does not cache empty results even with a partial TTL", async () => {
     const getSearchPosts = vi.fn(async () => []);
     const bundle = makeBundle("none-partial", "None", {
       posts: { getSearchPosts },
@@ -1017,17 +1017,11 @@ describe("StreamPipeline caching and coalescing", () => {
     await expect(
       pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
     ).resolves.toEqual([]);
-    expect(getSearchPosts).toHaveBeenCalledTimes(1);
-
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    await expect(
-      pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
-    ).resolves.toEqual([]);
     expect(getSearchPosts).toHaveBeenCalledTimes(2);
     pipeline.dispose();
   });
 
-  it("negative-caches empty results briefly", async () => {
+  it("does not cache empty results", async () => {
     const getSearchPosts = vi.fn(async () => []);
     const bundle = makeBundle("none", "None", {
       posts: { getSearchPosts },
@@ -1046,8 +1040,8 @@ describe("StreamPipeline caching and coalescing", () => {
     await expect(
       pipeline.handle({ type: "movie", imdbId: "tt0111161" }),
     ).resolves.toEqual([]);
-    expect(getSearchPosts).toHaveBeenCalledTimes(1);
-    expect(pipeline.getMetrics().emptyResults).toBe(1);
+    expect(getSearchPosts).toHaveBeenCalledTimes(2);
+    expect(pipeline.getMetrics().emptyResults).toBe(2);
     pipeline.dispose();
   });
 

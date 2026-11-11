@@ -35,8 +35,10 @@ docker build --build-arg PROVIDER_SHA=<commit> -t vega-stremio-addon .
 ```
 
 The entrypoint seeds that snapshot into an empty `DATA_DIR` and the normal updater refreshes it in
-the background. The build arg is optional; omitting it produces an image with no provider code.
-Review the upstream provider license before distributing such an image. Set `VEGA_ENV_FILE=` (or
+the background. The snapshot download retries transient GitHub failures three times with backoff and
+fails the Docker build if it still cannot produce a snapshot, so a bad upstream cannot ship an image
+without provider code. The build arg is optional; omitting it produces an image with no provider
+code. Review the upstream provider license before distributing such an image. Set `VEGA_ENV_FILE=` (or
 point it at another file) to skip the committed `deploy/beamup.env` defaults, for example in local
 runs and CI smoke tests.
 

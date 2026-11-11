@@ -12,6 +12,9 @@ const OPTIONAL_MODULES = ["episodes", "settings"];
 const MAX_MODULE_BYTES = 2 * 1024 * 1024;
 const HEADER_SCAN_LINES = 10;
 const SAFE_SHA = /^[A-Za-z0-9][A-Za-z0-9_.-]{6,79}$/;
+const REQUEST_TIMEOUT_MS = 60_000;
+const REQUEST_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 2_000;
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -193,13 +196,31 @@ export async function buildSnapshot({ extractedRoot, sha, outDir }) {
   return { sha, providers: entries.length, bytes };
 }
 
-async function extractTarball(source, sha, destination) {
+function isRetryableError(error) {
+  if (!error || typeof error !== "object") return false;
+  if (error.retryable === true) return true;
+  if (error.name === "TimeoutError" || error.name === "AbortError") return true;
+  if (error.name === "TypeError") return true;
+  if (typeof error.status === "number") {
+    return error.status === 429 || error.status >= 500;
+  }
+  return false;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function extractTarballOnce(source, sha, destination) {
   const url = `https://codeload.github.com/${source}/tar.gz/${sha}`;
   const response = await fetch(url, {
     headers: { "user-agent": "vega-stremio-addon-baseline" },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok || !response.body) {
-    throw new Error(`failed to download ${url}: HTTP ${response.status}`);
+    const error = new Error(`failed to download ${url}: HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
 
   const child = spawn("tar", ["-xzf", "-", "-C", destination], {
@@ -209,16 +230,44 @@ async function extractTarball(source, sha, destination) {
     child.once("error", reject);
     child.once("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`tar exited with code ${code}`));
+      else {
+        const error = new Error(`tar exited with code ${code}`);
+        error.retryable = true;
+        reject(error);
+      }
     });
   });
+  void exited.catch(() => undefined);
   try {
     await pipeline(Readable.fromWeb(response.body), child.stdin);
     await exited;
   } catch (error) {
     child.kill("SIGKILL");
+    await exited.catch(() => undefined);
     throw error;
   }
+}
+
+async function extractTarball(source, sha, destination) {
+  for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      await extractTarballOnce(source, sha, destination);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt >= REQUEST_ATTEMPTS || !isRetryableError(error)) {
+        throw error;
+      }
+      const delay = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+      console.warn(
+        `retrying download in ${delay}ms (attempt ${attempt + 1}/${REQUEST_ATTEMPTS}): ${message}`,
+      );
+      await fs.rm(destination, { recursive: true, force: true });
+      await fs.mkdir(destination, { recursive: true });
+      await sleep(delay);
+    }
+  }
+  throw new Error(`download failed after ${REQUEST_ATTEMPTS} attempts`);
 }
 
 async function findExtractedRoot(directory) {

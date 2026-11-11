@@ -288,3 +288,14 @@ toggle is cleared.
 - The provider search cache no longer stores empty post lists, so an empty result always retries
   instead of being negative-cached for `PROVIDER_CACHE_TTL_MS`.
 - Aligns Vega with Nuvio and SA7: empty stream results are never cached in any addon.
+
+## 2026-11-11 - Retry baseline snapshot fetch and fail the Docker build
+
+- `scripts/fetch-provider-snapshot.mjs` now retries the GitHub codeload tarball download up to three
+  times with 2 s/4 s backoff for timeouts, network errors, `429`, `5xx`, and tar extraction failures.
+  Non-retryable responses such as `404` fail immediately.
+- Each retry clears the partially extracted directory before downloading again. The existing
+  non-zero exit on failure now reliably fails the Docker `providers` stage instead of shipping an
+  image without a baseline snapshot.
+- Added a 60 s request timeout so a stalled download cannot hang the build indefinitely.
+- Verified with `npm run typecheck && npm test && npm run build` (331 tests).

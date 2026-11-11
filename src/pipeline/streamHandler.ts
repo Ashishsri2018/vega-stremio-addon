@@ -1213,7 +1213,7 @@ export class StreamPipeline implements StreamHandlerApi {
       throw new TimeoutError(`${label} aborted`);
     }
     const remaining = ctx.deadlineAt - Date.now();
-    const timeoutMs = Math.max(1, Math.min(budgetMs, remaining));
+    const timeoutMs = Math.max(1, Math.min(budgetMs, remaining + 50));
     const controller = new AbortController();
     const signal = AbortSignal.any([ctx.signal, controller.signal]);
     const timer = setTimeout(() => controller.abort(new TimeoutError(`${label} timed out`)), timeoutMs);

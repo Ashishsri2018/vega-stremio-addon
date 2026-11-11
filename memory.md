@@ -231,6 +231,11 @@ toggle is cleared.
 - Canonical same-file URL deduplication (`normalizeStreamKey`) strips URL fragments, trailing slashes, and host casing across all providers.
 - Stream limits increased: per-provider limit increased from 20 to 100 (`MAX_STREAMS_PER_PROVIDER = 100`, `DEFAULT_PER_PROVIDER_LIMIT = 100`, `MAX_LINKS_PER_PROVIDER = 100`, `MAX_STREAM_CALLS_PER_REQUEST = 120`), and total link limit increased from 200 to 1000 (`MAX_TOTAL_STREAMS = 1000`).
 - Updated `tests/mapping.test.ts` and `tests/pipeline.test.ts` with 5 new tests covering classification, externalUrl mapping, blocker dropping, canonical deduplication, direct-first sorting, and new 100/1000 limits. 330/330 tests pass.
+- Fixed provider-level timeout clamping in `src/pipeline/streamHandler.ts` (`remaining + 50`) so global pipeline deadline authoritative timer reliably records deadline hit telemetry without race conditions.
+- Deployed to Beamup via GitHub Actions CI/CD (`42964578722`). Verified live on `https://a38b6dd4fcd1-vg-8563e002b526099c5b9facfc-docker.baby-beamup.club`:
+  - `/manifest.json` and `/health` responding with 40 active providers.
+  - Movie `tt0137523` (Fight Club): 55 streams (54 direct, 1 externalUrl), 0 duplicates, direct streams ordered first, external stream correctly stripped of `url`, `subtitles`, and `proxyHeaders`.
+  - Series `tt0944947:1:1` (Game of Thrones): 22 streams (18 direct, 4 externalUrl for `.zip` archive packages), 0 duplicates, direct streams sorted first.
 - Docs updated (`architecture.md`, `memory.md`, `todo.md`).
 
 ## 2026-11-09 - Direct TMDB ID support

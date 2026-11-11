@@ -11,3 +11,4 @@
 - [x] Increase total stream limit from 200 to 1000 (`MAX_TOTAL_STREAMS = 1000`).
 - [x] Add unit tests in `tests/mapping.test.ts` and update `tests/pipeline.test.ts`.
 - [x] Cache stream responses with split TTLs (complete vs partial).
+- [x] Deploy to Beamup via GitHub Actions and verify live endpoints (`/manifest.json`, `/health`, `/stream/...`).

@@ -275,6 +275,12 @@ toggle is cleared.
   stream route keeps every inline track under a config segment.
 - Verified with `npm run typecheck && npm test && npm run build`.
 
+## 2026-11-11 - Canonical health and stats telemetry
+
+- `/health` and `/stats` now return the same canonical object: status/timestamps, snapshot, normalized provider stats, stream/metadata cache stats, and request metrics.
+- `TtlCache` now records hits, misses, sets, evictions, and expiries; `getMetrics()` exposes stream-cache, metadata-cache, and provider snapshots.
+- Health route tests assert canonical structure, stats parity, and normalized pipeline values.
+
 ## 2026-11-11 - Cache parity: non-empty only, partial results at 30 s
 
 - Stream results are cached only when non-empty. Deadline/settle-truncated non-empty results use

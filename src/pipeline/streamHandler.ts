@@ -326,6 +326,39 @@ export class StreamPipeline implements StreamHandlerApi {
     for (const [provider, state] of this.breakers) {
       breakers[provider] = state.openUntil > now ? "open" : "closed";
     }
+    const breakerByProvider = new Map(
+      Object.entries(breakers).map(([provider, state]) => [
+        provider.toLowerCase(),
+        state,
+      ]),
+    );
+    const providerIds = new Set([
+      ...this.providerStats.keys(),
+      ...breakerByProvider.keys(),
+    ]);
+    const providerStats = [...providerIds]
+      .sort()
+      .map((id) => {
+        const stat = this.providerStats.get(id);
+        const state = breakerByProvider.get(id) ?? "closed";
+        return {
+          id,
+          state,
+          calls: null,
+          ok: null,
+          empty: null,
+          errors: stat ? stat.failures : null,
+          timeouts: null,
+          skipped: null,
+          successRate: null,
+          avgMs: stat ? stat.avgLatencyMs : null,
+          lastMs: null,
+          maxMs: null,
+          lastError: null,
+          lastSuccessAt: null,
+        };
+      });
+    const streamCache = this.streamCache.stats();
     return {
       ...this.metrics,
       cacheEntries: {
@@ -334,6 +367,14 @@ export class StreamPipeline implements StreamHandlerApi {
         stream: this.streamCache.size,
       },
       breakers,
+      streamCache: {
+        ...streamCache,
+        enabled: this.config.streamCacheTtlMs > 0,
+        coalesced: 0,
+        partialTtlMs: this.config.streamPartialCacheTtlMs,
+      },
+      metadataCache: this.cinemeta.getCacheStats?.() ?? null,
+      providerStats,
     };
   }
 
@@ -466,7 +507,6 @@ export class StreamPipeline implements StreamHandlerApi {
         ctx.stopped = true;
         ctx.truncated = true;
         ctx.deadlineHit = true;
-        this.metrics.deadlineHits += 1;
         controller.abort(new TimeoutError("global deadline reached"));
         finishEarly();
       }, Math.max(1, deadlineAt - Date.now()));
@@ -501,6 +541,11 @@ export class StreamPipeline implements StreamHandlerApi {
         });
 
       const result = await Promise.race([work, earlyPromise, abortPromise]);
+      if (!ctx.deadlineHit && Date.now() >= deadlineAt) {
+        ctx.deadlineHit = true;
+        ctx.truncated = true;
+      }
+      if (ctx.deadlineHit) this.metrics.deadlineHits += 1;
 
       if (
         !workSignal.aborted &&

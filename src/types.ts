@@ -386,6 +386,15 @@ export type StreamRequest = ImdbStreamRequest | TmdbStreamRequest;
 
 export interface CinemetaApi {
   getMeta(type: MediaType, imdbId: string): Promise<CinemetaMeta | null>;
+  getCacheStats?(): {
+    hits: number;
+    misses: number;
+    sets: number;
+    evictions: number;
+    expired: number;
+    size: number;
+    maxEntries: number;
+  };
 }
 
 export interface TmdbApi {
@@ -431,6 +440,44 @@ export interface PipelineMetrics {
   providerFailures: number;
   cacheEntries: { search: number; mapping: number; stream: number };
   breakers: Record<string, "open" | "closed">;
+  streamCache?: {
+    enabled: boolean;
+    hits: number;
+    misses: number;
+    coalesced: number;
+    sets: number;
+    evictions: number;
+    expired: number;
+    size: number;
+    maxEntries: number;
+    ttlMs: number;
+    partialTtlMs: number;
+  };
+  metadataCache?: {
+    hits: number;
+    misses: number;
+    sets: number;
+    evictions: number;
+    expired: number;
+    size: number;
+    maxEntries: number;
+  } | null;
+  providerStats?: Array<{
+    id: string;
+    state: "open" | "half-open" | "closed";
+    calls: number | null;
+    ok: number | null;
+    empty: number | null;
+    errors: number | null;
+    timeouts: number | null;
+    skipped: number | null;
+    successRate: number | null;
+    avgMs: number | null;
+    lastMs: number | null;
+    maxMs: number | null;
+    lastError: string | null;
+    lastSuccessAt: string | null;
+  }>;
 }
 
 export interface StreamHandlerApi {

@@ -111,11 +111,11 @@ The `/configure` page builds these URLs in the browser; no filter state is store
 ## HTTP surface
 
 `src/addon/routes.ts` adds permissive CORS, a root info JSON, manifest, stream routes, subtitle
-routes, health, optional proxy, JSON 404s, and the HTML `/configure` page. The manifest advertises
+routes, health/stats, optional proxy, JSON 404s, and the HTML `/configure` page. The manifest advertises
 `idPrefixes: ["tt", "tmdb:"]` only when `TMDB_API_KEY` is configured; otherwise it stays `["tt"]`.
-Express answers `HEAD` on every GET route without a body. Root/stream/subtitle/health responses are
-`no-store`; errors never leak stack traces or secrets. Health is built from persisted state plus the
-active registry, with no settings values or URLs.
+Express answers `HEAD` on every GET route without a body. Root/stream/subtitle/health/stats responses are
+`no-store`; errors never leak stack traces or secrets. Health/stats are built from persisted state plus the
+active registry and pipeline counters, with no settings values or URLs. `/health` and `/stats` return the same canonical JSON.
 
 Subtitle routes: `GET /subtitles/:type/:path*` and `GET /:config/subtitles/:type/:path*`. The
 `path*` capture holds `<id>.json` plus Stremio's optional extras segment, which `parseStreamId`
@@ -159,7 +159,7 @@ name and URL are private and intentionally not recorded here; they live only in 
   504.
 - **Edge proxy:** Beamup's nginx is configured to cache `200`/`302` for 2 h (subject to response
   cache headers), enables `proxy_cache_lock`, and serves stale responses on upstream errors.
-  `/stream` and `/health` are `no-store`; cached responses mostly affect manifest and configure
+  `/stream`, `/health`, and `/stats` are `no-store`; cached responses mostly affect manifest and configure
   routes. Warm stream responses are still larger because the addon's in-memory caches and upstream
   providers have warmed up. The gateway also cuts long upstream requests: 504s were observed at
   17-19 s wall time with a 20 s global deadline, so `deploy/beamup.env` keeps

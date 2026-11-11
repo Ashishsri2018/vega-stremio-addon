@@ -381,13 +381,152 @@ describe("CORS", () => {
 });
 
 describe("health", () => {
-  it("passes through the health report without caching", async () => {
+  it("serves the canonical health and stats reports", async () => {
     const base = await startApp(createApp(makeDeps()));
+    const healthResponse = await nativeFetch(`${base}/health`);
+    const statsResponse = await nativeFetch(`${base}/stats`);
+
+    for (const response of [healthResponse, statsResponse]) {
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+
+    const health = (await healthResponse.json()) as Record<string, unknown>;
+    const stats = (await statsResponse.json()) as Record<string, unknown>;
+    expect(Object.keys(health)).toEqual([
+      "ok",
+      "addon",
+      "status",
+      "startedAt",
+      "uptimeSec",
+      "checkedAt",
+      "snapshot",
+      "providers",
+      "cache",
+      "metrics",
+    ]);
+    expect(Object.keys(health.snapshot as object)).toEqual([
+      "sha",
+      "fetchedAt",
+      "ageMs",
+      "refreshing",
+      "lastError",
+    ]);
+    expect(Object.keys(health.providers as object)).toEqual([
+      "total",
+      "circuits",
+      "stats",
+    ]);
+    expect(Object.keys(health.cache as object)).toEqual(["stream", "metadata"]);
+
+    expect(health).toMatchObject({
+      ok: true,
+      addon: "Vega Streams",
+      status: "ok",
+      snapshot: {
+        sha: healthFixture.activeSha,
+        fetchedAt: healthFixture.lastSuccess,
+        refreshing: false,
+        lastError: null,
+      },
+      providers: {
+        total: healthFixture.providerCount,
+        circuits: { open: 0, halfOpen: 0 },
+        stats: [],
+      },
+      cache: { metadata: null },
+    });
+
+    const stable = (body: Record<string, unknown>) => {
+      const snapshot = body.snapshot as Record<string, unknown>;
+      return {
+        ...body,
+        startedAt: null,
+        checkedAt: null,
+        snapshot: { ...snapshot, ageMs: null },
+      };
+    };
+    expect(stable(stats)).toEqual(stable(health));
+  });
+
+  it("normalizes pipeline stats into the canonical report", async () => {
+    const metrics = {
+      requests: 3,
+      cacheHits: 1,
+      cacheMisses: 2,
+      emptyResults: 0,
+      deadlineHits: 0,
+      settleHits: 1,
+      providerFailures: 1,
+      cacheEntries: { search: 1, mapping: 1, stream: 1 },
+      breakers: { alpha: "open" as const },
+      streamCache: {
+        enabled: true,
+        hits: 1,
+        misses: 2,
+        coalesced: 0,
+        sets: 1,
+        evictions: 0,
+        expired: 0,
+        size: 1,
+        maxEntries: 500,
+        ttlMs: 60000,
+        partialTtlMs: 30000,
+      },
+      metadataCache: {
+        hits: 2,
+        misses: 1,
+        sets: 2,
+        evictions: 0,
+        expired: 0,
+        size: 2,
+        maxEntries: 2000,
+      },
+      providerStats: [
+        {
+          id: "alpha",
+          state: "open" as const,
+          calls: null,
+          ok: null,
+          empty: null,
+          errors: 4,
+          timeouts: null,
+          skipped: null,
+          successRate: null,
+          avgMs: 120,
+          lastMs: null,
+          maxMs: null,
+          lastError: null,
+          lastSuccessAt: null,
+        },
+      ],
+    };
+    const pipeline: StreamHandlerApi = {
+      handle: vi.fn(async () => []),
+      getMetrics: () => metrics,
+    };
+    const base = await startApp(createApp(makeDeps({ pipeline })));
     const response = await nativeFetch(`${base}/health`);
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toEqual(healthFixture);
+    expect(await response.json()).toMatchObject({
+      providers: {
+        circuits: { open: 1, halfOpen: 0 },
+        stats: metrics.providerStats,
+      },
+      cache: {
+        stream: metrics.streamCache,
+        metadata: metrics.metadataCache,
+      },
+      metrics: {
+        requests: 3,
+        cacheHits: 1,
+        cacheMisses: 2,
+        emptyResults: 0,
+        deadlineHits: 0,
+        settleHits: 1,
+        providerFailures: 1,
+      },
+    });
   });
 
   it("returns HTTP 200 even when the health provider throws", async () => {
@@ -401,8 +540,9 @@ describe("health", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    const body = (await response.json()) as { status: string };
+    const body = (await response.json()) as { status: string; ok: boolean };
     expect(body.status).toBe("error");
+    expect(body.ok).toBe(false);
   });
 });
 
@@ -699,28 +839,6 @@ describe("provider filters and health metrics", () => {
       },
       expect.any(AbortSignal),
     );
-  });
-
-  it("merges pipeline metrics into the health report", async () => {
-    const metrics = {
-      requests: 3,
-      cacheHits: 1,
-      cacheMisses: 2,
-      emptyResults: 0,
-      deadlineHits: 0,
-      settleHits: 1,
-      providerFailures: 1,
-      cacheEntries: { search: 1, mapping: 1, stream: 1 },
-      breakers: { alpha: "open" as const },
-    };
-    const pipeline: StreamHandlerApi = {
-      handle: vi.fn(async () => []),
-      getMetrics: () => metrics,
-    };
-    const base = await startApp(createApp(makeDeps({ pipeline })));
-    const response = await nativeFetch(`${base}/health`);
-
-    expect(await response.json()).toEqual({ ...healthFixture, pipeline: metrics });
   });
 
   it("lists configured provider settings keys without values", async () => {

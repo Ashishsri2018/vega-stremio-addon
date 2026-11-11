@@ -9,7 +9,7 @@ Self-hosted Stremio addon that serves movie and series streams from the 39 enabl
 - Upstream is checked every 4-6 hours and new provider bundles are hot-swapped without a restart.
 - Direct links are returned with the HTTP headers players need; an optional signed proxy is included.
 - Per-user filters (resolution, file size, subtitle languages) are encoded in the add-on URL; nothing is stored server-side.
-- No admin HTTP API. Only `/`, `/configure`, `/manifest.json`, `/stream/...`, `/subtitles/...`, `/health`, and (when enabled)
+- No admin HTTP API. Only `/`, `/configure`, `/manifest.json`, `/stream/...`, `/subtitles/...`, `/health`, `/stats`, and (when enabled)
   `/proxy/...`.
 
 ## Quick start
@@ -147,7 +147,7 @@ Beamup notes:
 - The swarm service is limited to 1.2 CPU and 1 GB RAM, restarts at most 10 times per 5 minutes
   with a 60 s delay, and each GitHub user can have at most 20 addons.
 - Beamup's nginx proxy is configured to cache `200`/`302` responses for 2 h (subject to the
-  response's cache headers) and serves stale responses on upstream errors. `/stream` and `/health`
+  response's cache headers) and serves stale responses on upstream errors. `/stream`, `/health`, and `/stats`
   send `Cache-Control: no-store`; warm requests still return more streams because the addon's
   in-memory caches and upstream providers have warmed up.
 - Provider updates keep the normal 4-6 h schedule plus 0-120 s jitter; a fresh deploy bootstraps
@@ -175,7 +175,8 @@ Beamup notes:
 | `GET /subtitles/movie/tt0111161.json` | Provider subtitle tracks (`{id, url, lang}`), deduped by URL |
 | `GET /subtitles/series/tt0944947:1:1.json` | Subtitle tracks for a series episode |
 | `GET /<config>/subtitles/...` | Subtitle tracks filtered by the config segment's subtitle languages |
-| `GET /health` | Minimal provider/update status (no secrets) |
+| `GET /health` | Canonical telemetry: status, timestamps, snapshot, normalized provider stats, caches, and metrics |
+| `GET /stats` | Identical canonical telemetry response to `/health` |
 | `GET /proxy/<token>` | Signed media proxy (only when `PROXY_ENABLED=true`) |
 
 Addon routes always return HTTP 200 with JSON. Invalid IDs and provider failures produce

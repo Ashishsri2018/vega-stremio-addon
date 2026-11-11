@@ -60,6 +60,10 @@ export class CinemetaClient implements CinemetaApi {
     return meta;
   }
 
+  getCacheStats() {
+    return this.cache.stats();
+  }
+
   clearCache(): void {
     this.cache.clear();
   }

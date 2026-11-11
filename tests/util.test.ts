@@ -115,6 +115,26 @@ describe("TtlCache", () => {
     expect(cache.get("hot")).toBe(1);
     expect(cache.get("cold")).toBeUndefined();
   });
+
+  it("reports hits, misses, sets, evictions, and expiry", async () => {
+    const cache = new TtlCache<string, number>(20, 1);
+    cache.set("a", 1);
+    expect(cache.get("a")).toBe(1);
+    expect(cache.get("missing")).toBeUndefined();
+    cache.set("b", 2);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(cache.get("b")).toBeUndefined();
+    expect(cache.stats()).toMatchObject({
+      hits: 1,
+      misses: 2,
+      sets: 2,
+      evictions: 1,
+      expired: 1,
+      size: 0,
+      maxEntries: 1,
+      ttlMs: 20,
+    });
+  });
 });
 
 describe("startup guard", () => {

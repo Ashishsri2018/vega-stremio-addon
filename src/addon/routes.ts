@@ -16,6 +16,7 @@ import type {
 import { createProxyHandler } from "../proxy/server.js";
 import { createProxyToken } from "../proxy/sign.js";
 import { renderConfigurePage } from "./configure.js";
+import { buildStatus } from "./telemetry.js";
 import { ADDON_ID, getManifest } from "./manifest.js";
 import { contentIdOf, parseStreamId, requestLogFields } from "./parseId.js";
 import { RateLimiter } from "./rateLimit.js";
@@ -36,6 +37,43 @@ function healthFallback(): HealthReport {
     pending: [],
     lastError: "health check failed",
   };
+}
+
+function buildStatusReport(deps: AddonRoutesDeps) {
+  let health: HealthReport;
+  try {
+    health = deps.health();
+  } catch (error) {
+    deps.logger.error("health_check_failed", {
+      reason: error instanceof Error ? error.name : "unknown",
+    });
+    health = healthFallback();
+  }
+
+  const metrics = deps.pipeline.getMetrics?.();
+  const breakers = metrics?.breakers ?? {};
+  const open = Object.values(breakers).filter((state) => state === "open").length;
+
+  return buildStatus({
+    addon: "Vega Streams",
+    status: health.status,
+    snapshot: {
+      sha: health.activeSha,
+      fetchedAt: health.lastSuccess,
+      ageMs: health.snapshotAgeMs ?? null,
+      lastError: health.lastError,
+    },
+    providers: {
+      total: health.providerCount,
+      circuits: { open, halfOpen: 0 },
+      stats: metrics?.providerStats ?? [],
+    },
+    cache: {
+      stream: metrics?.streamCache,
+      metadata: metrics?.metadataCache ?? null,
+    },
+    metrics,
+  });
 }
 
 function requestIdOf(res: Response): string {
@@ -429,21 +467,12 @@ export function createApp(deps: AddonRoutesDeps): express.Express {
     });
   }
 
-  app.get("/health", (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    let report: HealthReport;
-    try {
-      report = deps.health();
-    } catch (error) {
-      deps.logger.error("health_check_failed", {
-        reason: error instanceof Error ? error.name : "unknown",
-      });
-      report = healthFallback();
-    }
-    const metrics = deps.pipeline.getMetrics?.();
-    if (metrics) report = { ...report, pipeline: metrics };
-    res.status(200).json(report);
-  });
+  for (const path of ["/health", "/stats"]) {
+    app.get(path, (req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).json(buildStatusReport(deps));
+    });
+  }
 
   app.use((req, res) => {
     res.status(404).json({ error: "not found" });

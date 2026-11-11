@@ -4,6 +4,11 @@ import type {
   StremioSubtitle,
   SubtitleTrack,
 } from "../types.js";
+import {
+  isWebPage,
+  BLOCKER_URL_PATTERN,
+  normalizeStreamKey,
+} from "./urlClassifier.js";
 
 export interface MapStreamsOptions {
   providerValue: string;
@@ -12,7 +17,7 @@ export interface MapStreamsOptions {
   perProviderLimit?: number;
 }
 
-const DEFAULT_PER_PROVIDER_LIMIT = 20;
+const DEFAULT_PER_PROVIDER_LIMIT = 100;
 
 const BLOCKED_HEADERS = new Set([
   "connection",
@@ -154,6 +159,8 @@ export function mapProviderStreams(
     const link = trimString(stream.link);
     if (!link) return;
 
+    if (BLOCKER_URL_PATTERN.test(link)) return;
+
     const type = trimString(stream.type).toLowerCase();
     if (type === "torrent" && !options.includeMagnets) return;
 
@@ -166,8 +173,9 @@ export function mapProviderStreams(
       if (isPlaceholderHost(url.hostname)) return;
     }
 
-    if (seenUrls.has(link)) return;
-    seenUrls.add(link);
+    const key = normalizeStreamKey(link);
+    if (!key || seenUrls.has(key)) return;
+    seenUrls.add(key);
 
     const server = trimString(stream.server);
     const quality = trimString(stream.quality);
@@ -175,27 +183,46 @@ export function mapProviderStreams(
     const titleParts = [server, quality, tags.join(", ")].filter(Boolean);
     const title = titleParts.length > 0 ? titleParts.join(" \u2022 ") : undefined;
 
-    const subtitles = normalizeSubtitles(
-      stream.subtitles,
-      options.providerValue,
-      streamIndex,
-    );
-
-    const requestHeaders = filterHeaders(stream.headers);
-    const behaviorHints: NonNullable<StremioStream["behaviorHints"]> = {
-      bingeGroup: `${options.providerValue}-${quality || "auto"}`,
-    };
-    if (Object.keys(requestHeaders).length > 0) {
-      behaviorHints.proxyHeaders = { request: requestHeaders };
-    }
-
-    mapped.push({
-      name: providerName,
-      ...(title ? { title } : {}),
-      url: link,
-      behaviorHints,
-      ...(subtitles.length > 0 ? { subtitles } : {}),
+    const isExternal = isWebPage(link, {
+      server: stream.server,
+      tag: stream.tag,
+      tags: stream.tags,
+      title,
+      quality: stream.quality,
     });
+
+    if (isExternal) {
+      mapped.push({
+        name: providerName,
+        ...(title ? { title } : {}),
+        externalUrl: link,
+        behaviorHints: {
+          bingeGroup: `${options.providerValue}-${quality || "auto"}`,
+        },
+      });
+    } else {
+      const subtitles = normalizeSubtitles(
+        stream.subtitles,
+        options.providerValue,
+        streamIndex,
+      );
+
+      const requestHeaders = filterHeaders(stream.headers);
+      const behaviorHints: NonNullable<StremioStream["behaviorHints"]> = {
+        bingeGroup: `${options.providerValue}-${quality || "auto"}`,
+      };
+      if (Object.keys(requestHeaders).length > 0) {
+        behaviorHints.proxyHeaders = { request: requestHeaders };
+      }
+
+      mapped.push({
+        name: providerName,
+        ...(title ? { title } : {}),
+        url: link,
+        behaviorHints,
+        ...(subtitles.length > 0 ? { subtitles } : {}),
+      });
+    }
   });
 
   return sortStreams(mapped).slice(0, limit);
@@ -230,6 +257,7 @@ export function inferQuality(stream: StremioStream): number {
   }
   if (stream.behaviorHints?.bingeGroup) sources.push(stream.behaviorHints.bingeGroup);
   if (typeof stream.url === "string") sources.push(stream.url);
+  if (typeof stream.externalUrl === "string") sources.push(stream.externalUrl);
 
   let best = 0;
   for (const source of sources) {
@@ -263,7 +291,8 @@ export function inferFileSizeBytes(stream: StremioStream): number {
   return Math.round(best);
 }
 
-function formatRank(url: string): number {
+function formatRank(url: string | undefined): number {
+  if (!url) return 3;
   let pathname: string;
   try {
     pathname = new URL(url).pathname.toLowerCase();
@@ -281,13 +310,21 @@ export function sortStreams(streams: StremioStream[]): StremioStream[] {
   const unique: Array<{ stream: StremioStream; index: number }> = [];
 
   streams.forEach((stream, index) => {
-    if (!stream || typeof stream.url !== "string" || !stream.url) return;
-    if (seen.has(stream.url)) return;
-    seen.add(stream.url);
+    if (!stream) return;
+    const targetUrl = stream.url || stream.externalUrl;
+    if (typeof targetUrl !== "string" || !targetUrl) return;
+    if (BLOCKER_URL_PATTERN.test(targetUrl)) return;
+    const key = normalizeStreamKey(targetUrl);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
     unique.push({ stream, index });
   });
 
   unique.sort((a, b) => {
+    const aIsExt = a.stream.externalUrl ? 1 : 0;
+    const bIsExt = b.stream.externalUrl ? 1 : 0;
+    if (aIsExt !== bIsExt) return aIsExt - bIsExt;
+
     const qualityDiff = inferQuality(b.stream) - inferQuality(a.stream);
     if (qualityDiff !== 0) return qualityDiff;
     const formatDiff = formatRank(a.stream.url) - formatRank(b.stream.url);

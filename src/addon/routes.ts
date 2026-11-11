@@ -66,6 +66,7 @@ function wrapStreamForProxy(
   baseUrl: string,
   secret: string,
 ): StremioStream {
+  if (stream.externalUrl || !stream.url) return stream;
   const requestHeaders = stream.behaviorHints?.proxyHeaders?.request;
   if (!requestHeaders || Object.keys(requestHeaders).length === 0) return stream;
 

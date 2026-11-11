@@ -222,6 +222,17 @@ toggle is cleared.
   `tests/addon.test.ts` case for GET and HEAD.
 - Docs updated (`README.md`, `architecture.md`).
 
+## 2026-11-11 - Web page & archive classification, canonical deduplication, 100/1000 stream limits
+
+- Added `src/pipeline/urlClassifier.ts` (<150 lines) to identify web pages, HTML embeds, Telegram links, and compressed archives (`.zip`, `.rar`, `.7z`, etc.).
+- `mapProviderStreams` maps detected web pages/embeds/archives to Stremio `externalUrl`, omitting `url`, `proxyHeaders`, and `subtitles` to prevent Stremio native player failures on web links.
+- Anti-bot / rate-limit blocker links (`/slowdown`) are dropped at ingestion in `mapProviderStreams` and `sortStreams`.
+- Direct playable video streams are sorted before external web links in `sortStreams`.
+- Canonical same-file URL deduplication (`normalizeStreamKey`) strips URL fragments, trailing slashes, and host casing across all providers.
+- Stream limits increased: per-provider limit increased from 20 to 100 (`MAX_STREAMS_PER_PROVIDER = 100`, `DEFAULT_PER_PROVIDER_LIMIT = 100`, `MAX_LINKS_PER_PROVIDER = 100`, `MAX_STREAM_CALLS_PER_REQUEST = 120`), and total link limit increased from 200 to 1000 (`MAX_TOTAL_STREAMS = 1000`).
+- Updated `tests/mapping.test.ts` and `tests/pipeline.test.ts` with 5 new tests covering classification, externalUrl mapping, blocker dropping, canonical deduplication, direct-first sorting, and new 100/1000 limits. 330/330 tests pass.
+- Docs updated (`architecture.md`, `memory.md`, `todo.md`).
+
 ## 2026-11-09 - Direct TMDB ID support
 
 - Requests now accept `tmdb:<id>[:<season>[:<episode>]]` in addition to IMDb `tt...` IDs. The

@@ -679,7 +679,7 @@ describe("StreamPipeline limits, cache and validation", () => {
       url: "https://api.test/cap",
       stream: {
         getStream: async () =>
-          Array.from({ length: 30 }, (_, index) => ({
+          Array.from({ length: 120 }, (_, index) => ({
             server: `Server ${index}`,
             link: `https://cap.test/${index}.mp4`,
             quality: "1080p",
@@ -695,7 +695,7 @@ describe("StreamPipeline limits, cache and validation", () => {
     });
     await expect(
       singlePipeline.handle({ type: "movie", imdbId: "tt0111161" }),
-    ).resolves.toHaveLength(20);
+    ).resolves.toHaveLength(100);
 
     const providers = Array.from({ length: 11 }, (_, index) =>
       movieProvider({
@@ -703,7 +703,7 @@ describe("StreamPipeline limits, cache and validation", () => {
         url: `https://api.test/p${index}`,
         stream: {
           getStream: async () =>
-            Array.from({ length: 25 }, (_, streamIndex) => ({
+            Array.from({ length: 100 }, (_, streamIndex) => ({
               server: `Server ${streamIndex}`,
               link: `https://p${index}.test/${streamIndex}.mp4`,
               quality: "1080p",
@@ -720,7 +720,7 @@ describe("StreamPipeline limits, cache and validation", () => {
     });
     await expect(
       allPipeline.handle({ type: "movie", imdbId: "tt0111161" }),
-    ).resolves.toHaveLength(200);
+    ).resolves.toHaveLength(1000);
   });
 
   it("collectSubtitles aggregates and dedupes provider tracks from the stream cache", async () => {

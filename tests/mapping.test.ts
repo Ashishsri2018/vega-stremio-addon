@@ -7,6 +7,11 @@ import {
   sortStreams,
   type MapStreamsOptions,
 } from "../src/pipeline/mapStreams.js";
+import {
+  isWebPage,
+  BLOCKER_URL_PATTERN,
+  normalizeStreamKey,
+} from "../src/pipeline/urlClassifier.js";
 
 const baseOptions: MapStreamsOptions = {
   providerValue: "provider",
@@ -209,17 +214,109 @@ describe("quality ordering", () => {
   });
 
   it("caps per-provider results after sorting", () => {
-    const streams = Array.from({ length: 25 }, (_, index) =>
+    const streams = Array.from({ length: 120 }, (_, index) =>
       stream({
         server: `Server ${index}`,
         link: `https://cdn.test/${index}.mp4`,
-        quality: index === 24 ? "2160p" : "1080p",
+        quality: index === 119 ? "2160p" : "1080p",
       }),
     );
-    expect(mapProviderStreams(streams, baseOptions)).toHaveLength(20);
+    expect(mapProviderStreams(streams, baseOptions)).toHaveLength(100);
     const limited = mapProviderStreams(streams, { ...baseOptions, perProviderLimit: 5 });
     expect(limited).toHaveLength(5);
-    expect(limited[0].url).toBe("https://cdn.test/24.mp4");
+    expect(limited[0].url).toBe("https://cdn.test/119.mp4");
+  });
+});
+
+describe("web page and archive classification", () => {
+  it("detects web pages, HTML embeds, and compressed archives", () => {
+    expect(isWebPage("https://moviesapi.to/movie/123")).toBe(true);
+    expect(isWebPage("https://screenscape.me/embed?tmdb=1")).toBe(true);
+    expect(isWebPage("https://site.test/movie.html")).toBe(true);
+    expect(isWebPage("https://site.test/movie.zip")).toBe(true);
+    expect(isWebPage("https://site.test/movie.rar")).toBe(true);
+    expect(isWebPage("https://t.me/bot?start=123")).toBe(true);
+
+    expect(isWebPage("https://cdn.test/movie.mp4")).toBe(false);
+    expect(isWebPage("https://cdn.test/movie.mkv")).toBe(false);
+    expect(isWebPage("https://cdn.test/master.m3u8")).toBe(false);
+    expect(isWebPage("https://bucket.r2.cloudflarestorage.com/video")).toBe(false);
+  });
+
+  it("maps web pages and archives to externalUrl and omits url and proxyHeaders", () => {
+    const mapped = mapProviderStreams(
+      [
+        stream({
+          link: "https://screenscape.me/embed?tmdb=1",
+          headers: { Referer: "https://site.test" },
+          subtitles: [{ uri: "https://subs.test/en.vtt", language: "en" }],
+        }),
+        stream({
+          link: "https://cdn.test/archive.zip",
+        }),
+        stream({
+          link: "https://cdn.test/movie.mp4",
+          headers: { Referer: "https://site.test" },
+        }),
+      ],
+      baseOptions,
+    );
+
+    expect(mapped[0].url).toBe("https://cdn.test/movie.mp4");
+    expect(mapped[0].externalUrl).toBeUndefined();
+    expect(mapped[0].behaviorHints?.proxyHeaders).toBeDefined();
+
+    const embed = mapped.find((s) => s.externalUrl === "https://screenscape.me/embed?tmdb=1");
+    expect(embed).toBeDefined();
+    expect(embed?.url).toBeUndefined();
+    expect(embed?.behaviorHints?.proxyHeaders).toBeUndefined();
+    expect(embed?.subtitles).toBeUndefined();
+
+    const zip = mapped.find((s) => s.externalUrl === "https://cdn.test/archive.zip");
+    expect(zip).toBeDefined();
+    expect(zip?.url).toBeUndefined();
+  });
+
+  it("drops blocker and slowdown links at ingestion", () => {
+    const mapped = mapProviderStreams(
+      [
+        stream({ link: "https://st.111477.xyz/slowdown?auth=1" }),
+        stream({ link: "https://cdn.test/good.mp4" }),
+      ],
+      baseOptions,
+    );
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].url).toBe("https://cdn.test/good.mp4");
+  });
+
+  it("canonicalizes URLs and removes duplicates of the same file", () => {
+    expect(normalizeStreamKey("https://EXAMPLE.COM:443/file.mp4#t=10")).toBe("https://example.com/file.mp4");
+    expect(normalizeStreamKey("https://cdn.test/file.mp4/")).toBe("https://cdn.test/file.mp4");
+    expect(normalizeStreamKey("magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test")).toBe(
+      "magnet:abcdef1234567890abcdef1234567890abcdef12",
+    );
+
+    const streams: StremioStream[] = [
+      { name: "P", title: "Video 1", url: "https://cdn.test/file.mp4" },
+      { name: "P", title: "Video 1 Duplicate with hash", url: "https://CDN.TEST/file.mp4#t=5" },
+      { name: "P", title: "Video 1 Duplicate with trailing slash", url: "https://cdn.test/file.mp4/" },
+      { name: "P", title: "Video 2", url: "https://cdn.test/file2.mp4" },
+    ];
+    const deduped = sortStreams(streams);
+    expect(deduped).toHaveLength(2);
+    expect(deduped.map((s) => s.url)).toEqual(["https://cdn.test/file.mp4", "https://cdn.test/file2.mp4"]);
+  });
+
+  it("sorts direct streams before external links", () => {
+    const streams: StremioStream[] = [
+      { name: "P", title: "4K Web", externalUrl: "https://screenscape.me/embed?tmdb=1" },
+      { name: "P", title: "1080p Direct", url: "https://cdn.test/1080.mp4" },
+      { name: "P", title: "720p Direct", url: "https://cdn.test/720.mp4" },
+    ];
+    const sorted = sortStreams(streams);
+    expect(sorted[0].url).toBe("https://cdn.test/1080.mp4");
+    expect(sorted[1].url).toBe("https://cdn.test/720.mp4");
+    expect(sorted[2].externalUrl).toBe("https://screenscape.me/embed?tmdb=1");
   });
 });
 

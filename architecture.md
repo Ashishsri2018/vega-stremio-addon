@@ -81,9 +81,8 @@ Provider bundles expect a `providerContext` with axios, cheerio, browser headers
    `getMeta` (IMDb ID when present, otherwise strong title/year/type match).
 5. Resolve direct links or episode links (`episodesLink` + episode range/pack matching with Cinemeta
    episode-name fallback).
-6. Resolve streams with per-provider timeouts, 3 concurrent calls per provider, 40 calls per request.
-7. Map to Stremio streams: safe headers only, normalized subtitles, deduplicated URLs, magnet and
-   placeholder filtering, quality/direct-first sorting, 20 per provider and 200 total.
+6. Resolve streams with per-provider timeouts, 3 concurrent calls per provider, 120 calls per request.
+7. Map to Stremio streams: safe headers only, normalized subtitles, same-file canonical deduplicated URLs (`normalizeStreamKey`), web page/embed/archive detection mapped to `externalUrl` (with blocker links like `/slowdown` dropped), direct video streams sorted first, 100 per provider and 1000 total.
 8. A global deadline returns partial results; abandoned provider promises are aborted and cannot
    hold the response open.
 

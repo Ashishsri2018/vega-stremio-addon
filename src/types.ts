@@ -410,10 +410,13 @@ export interface StremioSubtitle {
 export interface StremioStream {
   name: string;
   title?: string;
-  url: string;
+  url?: string;
+  externalUrl?: string;
   behaviorHints?: {
     proxyHeaders?: { request?: Record<string, string> };
     bingeGroup?: string;
+    videoSize?: number;
+    notWebReady?: boolean;
   };
   subtitles?: StremioSubtitle[];
 }

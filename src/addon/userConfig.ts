@@ -134,22 +134,6 @@ function languageMatches(trackLang: string, wanted: readonly string[]): boolean 
   });
 }
 
-function filterSubtitles(
-  stream: StremioStream,
-  langs: readonly string[],
-): StremioStream {
-  const subtitles = stream.subtitles;
-  if (!Array.isArray(subtitles) || subtitles.length === 0) return stream;
-
-  const kept = subtitles.filter((track) => languageMatches(track.lang, langs));
-  if (kept.length === subtitles.length) return stream;
-  if (kept.length === 0) {
-    const { subtitles: _dropped, ...rest } = stream;
-    return rest;
-  }
-  return { ...stream, subtitles: kept };
-}
-
 export function filterStreams(
   streams: StremioStream[],
   config: UserConfig,
@@ -157,12 +141,10 @@ export function filterStreams(
   const { maxRes, minRes, includeUnknown } = config;
   const maxSizeMB = config.maxSizeMB ?? null;
   const includeUnknownSize = config.includeUnknownSize ?? true;
-  const subtitleLangs = normalizeSubtitleLangs(config.subtitleLangs);
   const filterQuality = maxRes !== null || minRes !== null || !includeUnknown;
   const filterSize = maxSizeMB !== null;
-  const filterSubs = subtitleLangs.length > 0;
 
-  if (!filterQuality && !filterSize && !filterSubs) return streams;
+  if (!filterQuality && !filterSize) return streams;
 
   let result = filterQuality
     ? streams.filter((stream) => {
@@ -183,8 +165,7 @@ export function filterStreams(
     });
   }
 
-  if (!filterSubs) return result;
-  return result.map((stream) => filterSubtitles(stream, subtitleLangs));
+  return result;
 }
 
 export function filterSubtitleTracks(

@@ -310,7 +310,7 @@ describe("stream filtering", () => {
     }
   });
 
-  it("filters subtitle tracks by language from the config segment", async () => {
+  it("keeps inline subtitle tracks regardless of the config segment", async () => {
     const withSubs: StremioStream[] = [
       {
         name: "P",
@@ -340,6 +340,7 @@ describe("stream filtering", () => {
     const body = (await response.json()) as { streams: StremioStream[] };
     expect(body.streams[0]?.subtitles?.map((track) => track.lang)).toEqual([
       "en",
+      "es",
       "pt-BR",
     ]);
   });

@@ -261,3 +261,16 @@ toggle is cleared.
   `TMDB_API_KEY` GitHub Actions secret (never in the repo); the deploy step appends it to
   `BEAMUP_EXTRA_ENV` before `scripts/apply-beamup-env.sh` runs. It can also be placed directly in
   `BEAMUP_EXTRA_ENV`. `mal:`/`kitsu:` IDs remain unsupported.
+
+
+## 2026-11-11 - Decouple subtitle language filter from streams
+
+- `filterStreams()` now applies only resolution and size rules. It no longer trims inline
+  `stream.subtitles` or removes the field when a language does not match.
+- The subtitle routes already applied `filterSubtitleTracks(subtitles, userConfig)`; that remains the
+  only place `subtitleLangs` takes effect, so a language preference cannot remove media links.
+- `/configure` hint now states that the language list filters only the subtitles resource.
+- Updated `tests/userConfig.test.ts` to cover `filterSubtitleTracks` directly and to assert
+  `filterStreams` leaves streams and inline tracks untouched; `tests/addon.test.ts` now asserts the
+  stream route keeps every inline track under a config segment.
+- Verified with `npm run typecheck && npm test && npm run build`.

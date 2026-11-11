@@ -100,8 +100,8 @@ the pipeline returns, so cached stream lists stay shared across configs.
 - `maxRes` / `minRes`: resolution inferred from quality tags, titles, binge groups, and URLs.
 - `maxSizeMB`: file size parsed heuristically from human-readable values in stream titles
   (`656 MB`, `1.29 GB`); speeds such as `1.5 MB/s` are ignored. No per-stream HEAD requests.
-- `subtitleLangs`: keeps only matching subtitle tracks; region variants such as `pt-BR` match `pt`.
-  Streams are retained without subtitles when nothing matches.
+- `subtitleLangs`: filters tracks on the `/subtitles` resource only; region variants such as `pt-BR`
+  match `pt`. Video streams and their inline subtitle tracks are never modified by this preference.
 - `includeUnknown` / `includeUnknownSize`: unknown-resolution and unknown-size streams are kept by
   default and can be excluded explicitly.
 

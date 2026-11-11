@@ -216,9 +216,9 @@ resolution cannot be determined are kept unless the "include unknown resolution"
 cleared. File size is heuristic: it is parsed from human-readable values such as `656 MB` or
 `1.29 GB` in stream titles (speeds like `1.5 MB/s` are ignored), because many providers do not
 report size. Streams without a parseable size are kept unless the "include unknown file size"
-checkbox is cleared. When subtitle languages are selected, each stream keeps only matching tracks
-(region variants such as `pt-BR` match `pt`) and streams with no matching tracks are still returned
-without subtitles. Leaving the field blank keeps all subtitles. Installing the plain
+checkbox is cleared. When subtitle languages are selected, the `/subtitles` resource keeps only
+matching tracks (region variants such as `pt-BR` match `pt`); video streams and their inline subtitle
+tracks are not modified. Leaving the field blank keeps all tracks. Installing the plain
 `/manifest.json` URL remains supported and returns unfiltered streams. In Stremio, the add-on's
 gear icon opens the configure page with the current settings pre-filled.
 

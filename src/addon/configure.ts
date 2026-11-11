@@ -72,7 +72,7 @@ const PAGE = `<!doctype html>
 
   <label>Subtitle languages
     <input type="text" id="subtitleLangs" placeholder="Any (e.g. en, es, ar)" />
-    <span class="hint">Comma-separated language codes. Leave blank to keep all subtitles.</span>
+    <span class="hint">Filters the subtitles resource only. Comma-separated language codes; leave blank to keep all tracks.</span>
   </label>
 
   <label>Only these providers
